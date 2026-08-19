@@ -47,6 +47,5 @@ Current activities include:
 ## Contact
 
 **Company:** Alvian LLC  
-**Email:** [business-email@example.com]  
-**Website:** [Company website or Etsy store URL when available]  
+**Email:** [laka45623@outlook.com]  
 **Location:** Wyoming, United States
