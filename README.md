@@ -2,50 +2,39 @@
 
 ## Business Overview
 
-Alvian LLC is a Wyoming single-member limited liability company established by a China-based founder. The company operates remotely and is preparing to conduct business entirely online.
-
-Alvian LLC plans to develop and sell downloadable digital products through online marketplaces, primarily Etsy.
+Alvian LLC is a Wyoming single-member limited liability company established by a China-based founder. The company operates remotely and is preparing to design, manufacture, and sell electronic decorative products and accessories for livestreaming and content-creation spaces.
 
 ## Planned Business
 
-The company plans to offer digital products such as:
+Alvian LLC plans to create and sell physical electronic decor products through online marketplaces, primarily Etsy.
 
-- Digital templates
-- Electronic art assets
-- Downloadable design resources
-- Other original digital files
+Planned product categories include:
 
-All planned products will be delivered electronically through digital download. Alvian LLC does not plan to sell or ship physical products.
+- Electronic decorative products for creator spaces
+- Livestreaming setup accessories
+- Ambient electronic decor products
+- Other original electronic design products
+
+Products are intended to be designed and manufactured by Alvian LLC before being sold to customers.
 
 ## Operating Model
 
-Alvian LLC will operate through a fully online business model:
+Alvian LLC will operate through an online ecommerce model:
 
-- Products will be created and managed remotely.
-- Customers will place orders through the planned Etsy store.
-- Purchased files will be delivered electronically.
-- No physical goods will be sold.
-- No physical inventory will be maintained.
-- No warehousing, packaging, or physical shipping will be required.
-- All planned sales will consist of digital downloadable files.
-
-The company intends to receive marketplace revenue through its US business bank account once its store becomes operational.
+- Products will be designed and developed by Alvian LLC.
+- Physical electronic products will be manufactured for commercial sale.
+- Products will be listed through planned online marketplaces, primarily Etsy.
+- Customers will include individual consumers, livestreamers, and content creators.
+- The primary target market is the United States.
 
 ## Current Status
 
-Alvian LLC has recently completed its company registration and is currently in the business preparation stage.
+Alvian LLC has completed its company registration and is currently in the business preparation stage.
 
-The Etsy store is not launched yet. Alvian LLC is applying for a US business bank account first before launching the store and beginning commercial operations.
-
-Current activities include:
-
-- Establishing the company’s banking infrastructure
-- Preparing the planned Etsy storefront
-- Developing initial digital products
-- Organizing business and operational processes
+The Etsy store has not launched yet. Current activities include establishing U.S. business banking and payment infrastructure, preparing the planned storefront, developing initial product concepts, and organizing operations before commercial launch.
 
 ## Contact
 
 **Company:** Alvian LLC  
-**Email:** [laka45623@outlook.com]  
+**Email:** laka45623@outlook.com  
 **Location:** Wyoming, United States
