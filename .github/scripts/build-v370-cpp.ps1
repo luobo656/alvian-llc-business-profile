@@ -34,13 +34,14 @@ call "$dev" -arch=x64 -host_arch=x64
 cd /d "$src"
 rc /nologo /fo resource.res resource.rc
 if errorlevel 1 exit /b 1
-cl /nologo /std:c++17 /O2 /MT /EHsc /DUNICODE /D_UNICODE /permissive- /W3 /FIprelude.h main.cpp resource.res /Fe:"局域网代理共享助手.exe" /link /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /OPT:REF /OPT:ICF
+cl /nologo /std:c++17 /O2 /MT /EHsc /DUNICODE /D_UNICODE /permissive- /W3 /FIprelude.h main.cpp resource.res /Fe:LANProxyShareAssistant.exe /link /SUBSYSTEM:WINDOWS /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA /OPT:REF /OPT:ICF
 exit /b %errorlevel%
 "@
 $cmdFile = Join-Path $env:TEMP 'build-lanproxy-v370.cmd'; [IO.File]::WriteAllText($cmdFile,$cmd,[Text.Encoding]::ASCII)
 & cmd.exe /d /c $cmdFile
 if ($LASTEXITCODE -ne 0) { throw "MSVC build failed with exit code $LASTEXITCODE" }
-$exe = Join-Path $src '局域网代理共享助手.exe'; if(-not (Test-Path $exe)){throw 'EXE not generated'}
+$asciiExe = Join-Path $src 'LANProxyShareAssistant.exe'; if(-not (Test-Path $asciiExe)){throw 'EXE not generated'}
+$exe = Join-Path $src '局域网代理共享助手.exe'; Move-Item $asciiExe $exe -Force
 Write-Host "EXE bytes=$((Get-Item $exe).Length)"
 
 $p=Start-Process -FilePath $exe -WorkingDirectory $src -PassThru
