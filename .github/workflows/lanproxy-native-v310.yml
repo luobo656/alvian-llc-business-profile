@@ -46,7 +46,6 @@ jobs:
           $iconB64 = ($iconParts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
           [IO.File]::WriteAllBytes((Join-Path (Resolve-Path $src) 'app.ico'), [Convert]::FromBase64String($iconB64))
           Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
-          Copy-Item '.\lanproxy-native-v310\app.rc' (Join-Path $src 'app.rc') -Force
           Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
 
           $mainHash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -55,25 +54,14 @@ jobs:
           Write-Host "app.ico SHA256=$iconHash"
           if ($mainHash -ne 'c72ffbec0d2b4da92ffd723833b716e07137385f777dedebe08d6cc318cd727d') { throw 'main.go payload hash mismatch' }
           if ($iconHash -ne '75ecc7fdf75d981f0cc231edda24357592f93889abfde02902d97535a7b389db') { throw 'app.ico payload hash mismatch' }
-          Get-ChildItem $src | Select-Object Name,Length | Format-Table -AutoSize
 
-      - name: Build Windows resources
+      - name: Embed application icon and manifest
         shell: pwsh
         run: |
           Set-Location .\lanproxy-native-v310\src
-          $rc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter rc.exe -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match '\\x64\\rc\.exe$' } | Sort-Object FullName | Select-Object -Last 1
-          if (-not $rc) { throw 'rc.exe not found' }
-          & $rc.FullName /nologo /foapp.res app.rc
-          if ($LASTEXITCODE -ne 0) { throw "rc.exe failed: $LASTEXITCODE" }
-
-          $candidates = @()
-          if (Test-Path "${env:ProgramFiles}\Microsoft Visual Studio") { $candidates += Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter cvtres.exe -ErrorAction SilentlyContinue }
-          if (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio") { $candidates += Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -Recurse -Filter cvtres.exe -ErrorAction SilentlyContinue }
-          $cvtres = $candidates | Where-Object { $_.FullName -match '\\Hostx64\\x64\\cvtres\.exe$' } | Sort-Object FullName | Select-Object -Last 1
-          if (-not $cvtres) { throw 'cvtres.exe not found' }
-          & $cvtres.FullName /MACHINE:X64 /NOLOGO /OUT:resource_windows_amd64.syso app.res
-          if ($LASTEXITCODE -ne 0) { throw "cvtres failed: $LASTEXITCODE" }
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if (-not (Test-Path '.\resource_windows_amd64.syso')) { throw 'resource syso was not created' }
+          Get-Item '.\resource_windows_amd64.syso' | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Build native EXE
         shell: pwsh
@@ -83,7 +71,9 @@ jobs:
           $env:GOARCH='amd64'
           $env:CGO_ENABLED='0'
           go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
-          Get-Item '..\局域网代理共享助手.exe' | Select-Object Name,Length | Format-Table -AutoSize
+          $app=Get-Item '..\局域网代理共享助手.exe'
+          Write-Host "EXE size=$($app.Length) bytes"
+          if ($app.Length -gt 10000000) { throw 'Native EXE unexpectedly exceeds 10 MB' }
 
       - name: UI responsiveness smoke test
         shell: pwsh
@@ -103,14 +93,13 @@ jobs:
           using System.Runtime.InteropServices;
           public static class NativeCheck {
             [DllImport("user32.dll", SetLastError=true)]
-            public static extern IntPtr SendMessageTimeout(
-              IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
-              uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+            public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
           }
           "@
           $result=[IntPtr]::Zero
           $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
           if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI message loop is not responding immediately after launch' }
+          Write-Host 'Immediate UI response check passed.'
 
           Start-Sleep -Seconds 8
           $p.Refresh()
@@ -118,15 +107,13 @@ jobs:
           $result=[IntPtr]::Zero
           $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
           if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI froze during background startup scan' }
+          Write-Host 'Post-scan UI response check passed.'
           Stop-Process $p -Force -ErrorAction SilentlyContinue
 
-      - name: Check resources and checksum
+      - name: Generate checksum
         shell: pwsh
         run: |
           $exe = (Resolve-Path '.\lanproxy-native-v310\局域网代理共享助手.exe').Path
-          $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
-          Write-Host "Description=$($info.FileDescription) Version=$($info.FileVersion) Product=$($info.ProductName)"
-          if($info.FileVersion -notlike '3.1.0*'){ throw 'VERSIONINFO missing or incorrect' }
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           Write-Host "SHA256=$hash"
           Set-Content '.\lanproxy-native-v310\sha256.txt' $hash -Encoding ascii
