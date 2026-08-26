@@ -35,15 +35,21 @@ jobs:
       - name: Publish portable x64
         shell: pwsh
         run: dotnet publish "$env:PROJECT_PATH" -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:PublishSingleFile=false -p:PublishTrimmed=false -o .\lanproxy-v290-build\dist
+      - name: Verify real application executable
+        shell: pwsh
+        run: |
+          $appExe = '.\lanproxy-v290-build\dist\局域网代理共享助手.exe'
+          if (-not (Test-Path $appExe)) { throw 'Real application executable not found.' }
+          $app = Get-Item $appExe
+          Write-Host "App EXE: $($app.FullName) size=$($app.Length)"
+          if ($app.Length -lt 150000) { throw "Application EXE is unexpectedly small ($($app.Length) bytes). Refusing to package helper executable by mistake." }
       - name: Startup smoke test
         shell: pwsh
         run: |
-          $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Where-Object { $_.Name -like '*代理共享助手*' } | Select-Object -First 1
-          if (-not $exe) { $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Select-Object -First 1 }
-          if (-not $exe) { throw 'EXE not found for smoke test.' }
+          $appExe = (Resolve-Path '.\lanproxy-v290-build\dist\局域网代理共享助手.exe').Path
           $started = Get-Date
-          Write-Host "Launching $($exe.FullName)"
-          $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
+          Write-Host "Launching $appExe"
+          $p = Start-Process -FilePath $appExe -WorkingDirectory (Split-Path $appExe) -PassThru
           Start-Sleep -Seconds 6
           $p.Refresh()
           if ($p.HasExited) {
@@ -57,10 +63,10 @@ jobs:
       - name: Pack portable zip
         shell: pwsh
         run: |
-          $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Select-Object -First 1
-          if (-not $exe) { throw 'EXE not found.' }
+          $appExe = '.\lanproxy-v290-build\dist\局域网代理共享助手.exe'
+          if (-not (Test-Path $appExe)) { throw 'Real application executable not found before packaging.' }
           $readme = @'
-          局域网代理共享助手 v2.9.0
+          局域网代理共享助手 v2.9.0 启动修复版
           
           使用方法：
           1. 完整解压本压缩包。
@@ -68,14 +74,12 @@ jobs:
           3. 软件会自动检测局域网与本机代理。
           4. 开启共享后，手机在同一局域网内设置 HTTP 手动代理。
           
-          本版本重点优化：紧凑布局、设备刷新实时反馈、操作提示自动消失、手机设置步骤等权重显示。
+          修复：便携包打包时误将 createdump.exe 覆盖主程序的问题。
           '@
           Set-Content -Path .\lanproxy-v290-build\dist\使用说明.txt -Value $readme -Encoding UTF8
-          $targetExe = '.\lanproxy-v290-build\dist\局域网代理共享助手.exe'
-          if ($exe.FullName -ne (Resolve-Path .\lanproxy-v290-build\dist).Path + '\局域网代理共享助手.exe') { Copy-Item $exe.FullName $targetExe -Force }
-          Compress-Archive -Path .\lanproxy-v290-build\dist\* -DestinationPath .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_Portable.zip -Force
+          Compress-Archive -Path .\lanproxy-v290-build\dist\* -DestinationPath .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_StartupFix_Portable.zip -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: LANProxyShareAssistant-v2.9.0-win-x64
-          path: .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_Portable.zip
+          name: LANProxyShareAssistant-v2.9.0-startup-fix-win-x64
+          path: .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_StartupFix_Portable.zip
           if-no-files-found: error
