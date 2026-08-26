@@ -28,7 +28,9 @@ jobs:
           if (Test-Path $src) { Remove-Item $src -Recurse -Force }
           New-Item -ItemType Directory -Path $src -Force | Out-Null
 
-          $mainB64 = (Get-Content '.\lanproxy-native-v310\main.go.gz.b64' -Raw).Trim()
+          $parts = Get-ChildItem '.\lanproxy-native-v310\main.part*' | Sort-Object Name
+          if ($parts.Count -ne 4) { throw "Expected 4 verified main payload parts, found $($parts.Count)" }
+          $mainB64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
           [IO.File]::WriteAllBytes('.\lanproxy-native-v310\main.go.gz', [Convert]::FromBase64String($mainB64))
           $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v310\main.go.gz'))
           try {
