@@ -1,0 +1,76 @@
+diff --git a/main.go b/main.go
+index 33162e1..722da4b 100644
+--- a/main.go
++++ b/main.go
+@@ -1489,15 +1489,20 @@ func activeDeviceCount() int {
+ 	return n
+ }
+ 
+-func networkActivity() bool {
++func activeConnectionCount() int {
+ 	deviceMu.Lock()
+ 	defer deviceMu.Unlock()
++	total := 0
+ 	for _, d := range connectedDevices {
+-		if d.IsOnline && d.ActiveConnections > 0 {
+-			return true
++		if d.IsOnline {
++			total += d.ActiveConnections
+ 		}
+ 	}
+-	return false
++	return total
++}
++
++func networkActivity() bool {
++	return activeConnectionCount() > 0
+ }
+ 
+ func deviceSnapshot() []ConnectedDevice {
+@@ -1923,10 +1928,10 @@ func drawHomePage(hdc syscall.Handle, width, height int32) {
+ 	rounded(hdc, dev, 12, rgb(250, 251, 253), rgb(229, 233, 240))
+ 	drawText(hdc, "共享概览", RECT{dev.Left + 18, 254, dev.Right - 18, 280}, fontButton, rgb(40, 49, 65), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+ 	n := activeDeviceCount()
+-	activity := "空闲"
++	activeConnections := activeConnectionCount()
++	activity := fmt.Sprintf("活跃 %d", activeConnections)
+ 	activityColor := rgb(121, 130, 145)
+-	if networkActivity() {
+-		activity = "网络活跃"
++	if activeConnections > 0 {
+ 		activityColor = rgb(22, 135, 71)
+ 	}
+ 	drawText(hdc, fmt.Sprintf("接入设备  %d 台在线", n), RECT{dev.Left + 18, 286, dev.Right - 18, 310}, fontNormal, rgb(31, 39, 53), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+@@ -2066,14 +2071,13 @@ func drawDevicesPage(hdc syscall.Handle, width, height int32) {
+ 	card(hdc, r3)
+ 	drawText(hdc, "在线设备", RECT{r1.Left + 18, 148, r1.Right - 18, 168}, fontTiny, rgb(116, 126, 143), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+ 	drawText(hdc, strconv.Itoa(activeDeviceCount()), RECT{r1.Left + 18, 168, r1.Right - 18, 202}, fontBig, rgb(22, 30, 44), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+-	drawText(hdc, "网络活跃", RECT{r2.Left + 18, 148, r2.Right - 18, 168}, fontTiny, rgb(116, 126, 143), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+-	act := "空闲"
++	drawText(hdc, "活跃", RECT{r2.Left + 18, 148, r2.Right - 18, 168}, fontTiny, rgb(116, 126, 143), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
++	activeConnections := activeConnectionCount()
+ 	actColor := rgb(111, 122, 140)
+-	if networkActivity() {
+-		act = "活跃"
++	if activeConnections > 0 {
+ 		actColor = rgb(22, 135, 71)
+ 	}
+-	drawText(hdc, act, RECT{r2.Left + 18, 168, r2.Right - 18, 202}, fontBig, actColor, DT_LEFT|DT_VCENTER|DT_SINGLELINE)
++	drawText(hdc, strconv.Itoa(activeConnections), RECT{r2.Left + 18, 168, r2.Right - 18, 202}, fontBig, actColor, DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+ 	drawText(hdc, "当前共享地址", RECT{r3.Left + 18, 148, r3.Right - 18, 168}, fontTiny, rgb(116, 126, 143), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+ 	addr := fmt.Sprintf("%s:%d", selectedIP(), currentSharePort())
+ 	drawText(hdc, addr, RECT{r3.Left + 18, 168, r3.Right - 18, 202}, fontSection, rgb(25, 103, 246), DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS)
+@@ -2105,11 +2109,8 @@ func drawDevicesPage(hdc syscall.Handle, width, height int32) {
+ 		drawText(hdc, secondary, RECT{r.Left + 60, r.Top + 42, r.Left + 310, r.Top + 66}, fontSmall, rgb(95, 106, 124), DT_LEFT|DT_VCENTER|DT_SINGLELINE)
+ 		status := "最近离线"
+ 		statusColor := rgb(120, 130, 147)
+-		if d.IsOnline && d.ActiveConnections > 0 {
+-			status = "在线 · 网络活跃"
+-			statusColor = rgb(22, 135, 71)
+-		} else if d.IsOnline {
+-			status = "在线 · 暂无活动"
++		if d.IsOnline {
++			status = fmt.Sprintf("在线 · 活跃 %d", d.ActiveConnections)
+ 			statusColor = rgb(22, 135, 71)
+ 		}
+ 		drawText(hdc, status, RECT{r.Left + 360, r.Top + 16, r.Left + 560, r.Top + 42}, fontButton, statusColor, DT_LEFT|DT_VCENTER|DT_SINGLELINE)
