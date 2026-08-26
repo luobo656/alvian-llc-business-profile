@@ -51,19 +51,26 @@ jobs:
 
           $code = Get-Content $codePath -Raw -Encoding UTF8
           $code = $code.Replace('LAN Proxy Share Assistant v2.9.0 initialized', 'LAN Proxy Share Assistant v2.9.1 initialized')
-          $oldCode = "var connectionsText = online.Sum(x => x.ActiveConnections).ToString();`r`n            if (DevicesConnectionsText.Text != connectionsText) DevicesConnectionsText.Text = connectionsText;"
-          $newCode = "var networkActivityText = online.Sum(x => x.ActiveConnections) > 0 ? \"活跃\" : \"空闲\";`r`n            if (DevicesConnectionsText.Text != networkActivityText) DevicesConnectionsText.Text = networkActivityText;"
-          if (-not $code.Contains($oldCode)) {
-            $oldCode = "var connectionsText = online.Sum(x => x.ActiveConnections).ToString();`n            if (DevicesConnectionsText.Text != connectionsText) DevicesConnectionsText.Text = connectionsText;"
-            $newCode = "var networkActivityText = online.Sum(x => x.ActiveConnections) > 0 ? \"活跃\" : \"空闲\";`n            if (DevicesConnectionsText.Text != networkActivityText) DevicesConnectionsText.Text = networkActivityText;"
-          }
-          if (-not $code.Contains($oldCode)) { throw 'Expected connection summary code was not found.' }
-          $code = $code.Replace($oldCode, $newCode)
-          Set-Content $codePath $code -Encoding UTF8
+          $oldCodeLf = @'
+var connectionsText = online.Sum(x => x.ActiveConnections).ToString();
+            if (DevicesConnectionsText.Text != connectionsText) DevicesConnectionsText.Text = connectionsText;
+'@
+          $newCodeLf = @'
+var networkActivityText = online.Sum(x => x.ActiveConnections) > 0 ? "活跃" : "空闲";
+            if (DevicesConnectionsText.Text != networkActivityText) DevicesConnectionsText.Text = networkActivityText;
+'@
+          $normalizedCode = $code.Replace("`r`n", "`n")
+          if (-not $normalizedCode.Contains($oldCodeLf)) { throw 'Expected connection summary code was not found.' }
+          $normalizedCode = $normalizedCode.Replace($oldCodeLf, $newCodeLf)
+          Set-Content $codePath $normalizedCode -Encoding UTF8
 
           $model = Get-Content $modelPath -Raw -Encoding UTF8
           $oldStatus = 'public string StatusText => IsOnline ? $"在线 · {ActiveConnections} 个代理连接" : "最近离线";'
-          $newStatus = "public string StatusText => IsOnline`r`n        ? (ActiveConnections > 0 ? \"在线 · 网络活跃\" : \"在线 · 暂无活动\")`r`n        : \"最近离线\";"
+          $newStatus = @'
+public string StatusText => IsOnline
+        ? (ActiveConnections > 0 ? "在线 · 网络活跃" : "在线 · 暂无活动")
+        : "最近离线";
+'@
           if (-not $model.Contains($oldStatus)) { throw 'Expected device status text was not found.' }
           $model = $model.Replace($oldStatus, $newStatus)
           Set-Content $modelPath $model -Encoding UTF8
