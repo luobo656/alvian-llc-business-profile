@@ -1,9 +1,9 @@
-name: LANProxy Native v3.1
+name: LANProxy Native v3.2 UI Polish
 
 on:
   push:
     branches:
-      - lanproxy-native-v310-responsive
+      - lanproxy-native-v320-ui-polish
     paths:
       - 'lanproxy-native-v310/**'
       - '.github/workflows/lanproxy-native-v310.yml'
@@ -21,7 +21,7 @@ jobs:
           go-version: '1.23.x'
           cache: false
 
-      - name: Rebuild source files
+      - name: Rebuild v3.1 source and apply UI-only patch
         shell: pwsh
         run: |
           $src = '.\lanproxy-native-v310\src'
@@ -41,6 +41,21 @@ jobs:
             } finally { $gz.Dispose() }
           } finally { $in.Dispose() }
 
+          $patchB64 = (Get-Content '.\lanproxy-native-v310\ui_v320.patch.gz.b64' -Raw).Trim()
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v310\ui_v320.patch.gz', [Convert]::FromBase64String($patchB64))
+          $pin = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v310\ui_v320.patch.gz'))
+          try {
+            $pgz = New-Object IO.Compression.GzipStream($pin, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $pout = [IO.File]::Create((Resolve-Path '.\lanproxy-native-v310').Path + '\ui_v320.patch')
+              try { $pgz.CopyTo($pout) } finally { $pout.Dispose() }
+            } finally { $pgz.Dispose() }
+          } finally { $pin.Dispose() }
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'UI patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'UI patch failed' }
+
           $iconParts = Get-ChildItem '.\lanproxy-native-v310\icon.part*' | Sort-Object Name
           if ($iconParts.Count -ne 3) { throw "Expected 3 verified icon payload parts, found $($iconParts.Count)" }
           $iconB64 = ($iconParts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
@@ -52,7 +67,7 @@ jobs:
           $iconHash=(Get-FileHash (Join-Path $src 'app.ico') -Algorithm SHA256).Hash.ToLowerInvariant()
           Write-Host "main.go SHA256=$mainHash"
           Write-Host "app.ico SHA256=$iconHash"
-          if ($mainHash -ne 'c72ffbec0d2b4da92ffd723833b716e07137385f777dedebe08d6cc318cd727d') { throw 'main.go payload hash mismatch' }
+          if ($mainHash -ne '45d3aef46befba70c8b79966d57d7e4c4beab302b95ffbc7a217769d0787eda4') { throw 'v3.2 main.go hash mismatch' }
           if ($iconHash -ne '75ecc7fdf75d981f0cc231edda24357592f93889abfde02902d97535a7b389db') { throw 'app.ico payload hash mismatch' }
 
       - name: Embed application icon and manifest
@@ -61,7 +76,6 @@ jobs:
           Set-Location .\lanproxy-native-v310\src
           go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
           if (-not (Test-Path '.\resource_windows_amd64.syso')) { throw 'resource syso was not created' }
-          Get-Item '.\resource_windows_amd64.syso' | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Build native EXE
         shell: pwsh
@@ -99,15 +113,12 @@ jobs:
           $result=[IntPtr]::Zero
           $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
           if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI message loop is not responding immediately after launch' }
-          Write-Host 'Immediate UI response check passed.'
-
           Start-Sleep -Seconds 8
           $p.Refresh()
           if($p.HasExited){ throw 'App exited during background startup scan' }
           $result=[IntPtr]::Zero
           $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
           if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI froze during background startup scan' }
-          Write-Host 'Post-scan UI response check passed.'
           Stop-Process $p -Force -ErrorAction SilentlyContinue
 
       - name: Generate checksum
@@ -120,7 +131,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LANProxyShareAssistant-v3.1.0-native-win-x64
+          name: LANProxyShareAssistant-v3.2.0-ui-polish-native-win-x64
           path: |
             .\lanproxy-native-v310\局域网代理共享助手.exe
             .\lanproxy-native-v310\sha256.txt
