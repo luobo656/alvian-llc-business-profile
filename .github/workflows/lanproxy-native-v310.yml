@@ -19,18 +19,39 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
+          cache: false
 
-      - name: Rebuild source
+      - name: Rebuild source files
         shell: pwsh
         run: |
-          $parts = Get-ChildItem .\lanproxy-native-v310\source.part* | Sort-Object Name
-          if (-not $parts) { throw 'Source chunks not found.' }
-          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
-          [IO.File]::WriteAllBytes('.\lanproxy-native-v310\source.zip', [Convert]::FromBase64String($b64))
-          New-Item -ItemType Directory -Path .\lanproxy-native-v310\src -Force | Out-Null
-          tar -xf .\lanproxy-native-v310\source.zip -C .\lanproxy-native-v310\src
-          if ($LASTEXITCODE -ne 0) { throw "tar extraction failed: $LASTEXITCODE" }
-          Get-ChildItem .\lanproxy-native-v310\src | Select-Object Name,Length | Format-Table -AutoSize
+          $src = '.\lanproxy-native-v310\src'
+          if (Test-Path $src) { Remove-Item $src -Recurse -Force }
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+
+          $mainB64 = (Get-Content '.\lanproxy-native-v310\main.go.gz.b64' -Raw).Trim()
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v310\main.go.gz', [Convert]::FromBase64String($mainB64))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v310\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+
+          $iconB64 = (Get-Content '.\lanproxy-native-v310\app.ico.b64' -Raw).Trim()
+          [IO.File]::WriteAllBytes((Join-Path (Resolve-Path $src) 'app.ico'), [Convert]::FromBase64String($iconB64))
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\app.rc' (Join-Path $src 'app.rc') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+          $mainHash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $iconHash=(Get-FileHash (Join-Path $src 'app.ico') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "main.go SHA256=$mainHash"
+          Write-Host "app.ico SHA256=$iconHash"
+          if ($mainHash -ne 'c72ffbec0d2b4da92ffd723833b716e07137385f777dedebe08d6cc318cd727d') { throw 'main.go payload hash mismatch' }
+          if ($iconHash -ne '75ecc7fdf75d981f0cc231edda24357592f93889abfde02902d97535a7b389db') { throw 'app.ico payload hash mismatch' }
+          Get-ChildItem $src | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Build Windows resources
         shell: pwsh
