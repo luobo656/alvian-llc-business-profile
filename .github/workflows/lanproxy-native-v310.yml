@@ -25,10 +25,12 @@ jobs:
         run: |
           $parts = Get-ChildItem .\lanproxy-native-v310\source.part* | Sort-Object Name
           if (-not $parts) { throw 'Source chunks not found.' }
-          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
           [IO.File]::WriteAllBytes('.\lanproxy-native-v310\source.zip', [Convert]::FromBase64String($b64))
           New-Item -ItemType Directory -Path .\lanproxy-native-v310\src -Force | Out-Null
-          Expand-Archive .\lanproxy-native-v310\source.zip .\lanproxy-native-v310\src -Force
+          tar -xf .\lanproxy-native-v310\source.zip -C .\lanproxy-native-v310\src
+          if ($LASTEXITCODE -ne 0) { throw "tar extraction failed: $LASTEXITCODE" }
+          Get-ChildItem .\lanproxy-native-v310\src | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Build Windows resources
         shell: pwsh
