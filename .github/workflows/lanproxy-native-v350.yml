@@ -26,11 +26,11 @@ jobs:
       - name: Rebuild v3.3 source and apply ratio/logo-only v3.5 changes
         shell: pwsh
         run: |
-          $src = '.\\lanproxy-native-v350\\src'
+          $src = '.\lanproxy-native-v350\src'
           New-Item -ItemType Directory -Path $src -Force | Out-Null
           $chunkNames = @('source.chunk00x','source.chunk01','source.chunk02','source.chunk03','source.chunk04','source.chunk05','source.chunk06','source.chunk07','source.chunk08')
           $segments = @()
-          foreach($n in $chunkNames){ $segments += (Get-Content (Join-Path '.\\lanproxy-native-v330' $n) -Raw).Trim() }
+          foreach($n in $chunkNames){ $segments += (Get-Content (Join-Path '.\lanproxy-native-v330' $n) -Raw).Trim() }
           $all = $segments -join ''
           if($all.Length -ne 34880){ throw "Unexpected source payload length: $($all.Length)" }
           [IO.File]::WriteAllBytes((Join-Path $src 'main.go.gz'), [Convert]::FromBase64String($all))
@@ -50,7 +50,6 @@ jobs:
             "`tblue := rgb(37, 99, 235)",
             "`twhite := rgb(255, 255, 255)",
             "`tfillRounded(hdc, RECT{x, y, x + 38, y + 38}, 10, blue)",
-            "`t// Classic share geometry: one source node feeding two destination nodes.",
             "`tline(hdc, x+14, y+19, x+24, y+12, white, 2)",
             "`tline(hdc, x+14, y+19, x+24, y+26, white, 2)",
             "`tcircle(hdc, x+11, y+19, 4, white, white)",
@@ -58,12 +57,16 @@ jobs:
             "`tcircle(hdc, x+27, y+28, 4, white, white)",
             '}'
           ) -join "`r`n"
-          $rx = [regex]::new('(?s)func drawWifi\\(hdc syscall\\.Handle, x, y int32\\) \\{.*?\\r?\\n\\}')
-          $patched = $rx.Replace($text, $newLogo, 1)
-          if($patched -eq $text){ throw 'Logo function replacement failed' }
+          $sig = 'func drawWifi(hdc syscall.Handle, x, y int32) {'
+          $start = $text.IndexOf($sig)
+          if($start -lt 0){ throw 'Logo function start not found' }
+          $close = $text.IndexOf("`n}", $start)
+          if($close -lt 0){ throw 'Logo function end not found' }
+          $after = $close + 2
+          $patched = $text.Substring(0,$start) + $newLogo + $text.Substring($after)
           [IO.File]::WriteAllText((Resolve-Path $main), $patched, [Text.UTF8Encoding]::new($false))
-          Copy-Item '.\\lanproxy-native-v310\\app.manifest' (Join-Path $src 'app.manifest') -Force
-          Copy-Item '.\\lanproxy-native-v310\\go.mod' (Join-Path $src 'go.mod') -Force
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
           gofmt -w $main
 
       - name: Generate clean multi-size share app icon
@@ -91,7 +94,6 @@ jobs:
             $g.FillPath($grad,$path)
             $hi=[Drawing.Pen]::new([Drawing.Color]::FromArgb(65,255,255,255),[Math]::Max(1.0,$s*0.008))
             $g.DrawPath($hi,$path)
-
             $white=[Drawing.Color]::White
             $pen=[Drawing.Pen]::new($white,[Math]::Max(1.5,$s*0.052))
             $pen.StartCap=[Drawing.Drawing2D.LineCap]::Round; $pen.EndCap=[Drawing.Drawing2D.LineCap]::Round
@@ -103,14 +105,13 @@ jobs:
             $brush=[Drawing.SolidBrush]::new($white)
             $r=[float]([Math]::Max(1.8,$s*0.072))
             foreach($pt in @(@($x1,$y1),@($x2,$y2),@($x3,$y3))){ $g.FillEllipse($brush,[float]$pt[0]-$r,[float]$pt[1]-$r,$r*2,$r*2) }
-
             $ms=[IO.MemoryStream]::new(); $bmp.Save($ms,[Drawing.Imaging.ImageFormat]::Png); $data=$ms.ToArray()
             $ms.Dispose(); $brush.Dispose(); $pen.Dispose(); $hi.Dispose(); $grad.Dispose(); $path.Dispose(); $g.Dispose(); $bmp.Dispose()
             return ,$data
           }
           $sizes=@(16,20,24,32,40,48,64,128,256); $images=@()
           foreach($s in $sizes){ $images += [pscustomobject]@{Size=$s;Data=(Render-Logo $s)} }
-          $out=(Resolve-Path '.\\lanproxy-native-v350\\src').Path+'\\app.ico'
+          $out=(Resolve-Path '.\lanproxy-native-v350\src').Path+'\app.ico'
           $fs=[IO.File]::Create($out); $bw=[IO.BinaryWriter]::new($fs)
           $bw.Write([UInt16]0); $bw.Write([UInt16]1); $bw.Write([UInt16]$images.Count)
           $offset=6+16*$images.Count
@@ -126,24 +127,24 @@ jobs:
       - name: Embed icon and administrator manifest
         shell: pwsh
         run: |
-          Set-Location .\\lanproxy-native-v350\\src
+          Set-Location .\lanproxy-native-v350\src
           go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
-          if(-not (Test-Path '.\\resource_windows_amd64.syso')){ throw 'resource syso was not created' }
+          if(-not (Test-Path '.\resource_windows_amd64.syso')){ throw 'resource syso was not created' }
 
       - name: Build lightweight native single EXE
         shell: pwsh
         run: |
-          Set-Location .\\lanproxy-native-v350\\src
+          Set-Location .\lanproxy-native-v350\src
           $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
-          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\\局域网代理共享助手.exe' .
-          $app=Get-Item '..\\局域网代理共享助手.exe'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $app=Get-Item '..\局域网代理共享助手.exe'
           Write-Host "EXE size=$($app.Length) bytes"
           if($app.Length -gt 10000000){ throw 'Native EXE unexpectedly exceeds 10 MB' }
 
       - name: Runtime smoke test and preview
         shell: pwsh
         run: |
-          $exe=(Resolve-Path '.\\lanproxy-native-v350\\局域网代理共享助手.exe').Path
+          $exe=(Resolve-Path '.\lanproxy-native-v350\局域网代理共享助手.exe').Path
           $p=Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
           $deadline=(Get-Date).AddSeconds(15)
           do{ Start-Sleep -Milliseconds 400; $p.Refresh(); if($p.HasExited){throw "App exited early code $($p.ExitCode)"} }until($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
@@ -159,22 +160,22 @@ jobs:
           try{
             Add-Type -AssemblyName System.Drawing
             $bmp=[Drawing.Bitmap]::new($w,$h); $g=[Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($wr.Left,$wr.Top,0,0,[Drawing.Size]::new($w,$h))
-            $shot=(Resolve-Path '.\\lanproxy-native-v350').Path+'\\v350-preview.png'; $bmp.Save($shot,[Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
+            $shot=(Resolve-Path '.\lanproxy-native-v350').Path+'\v350-preview.png'; $bmp.Save($shot,[Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()
           }catch{ Write-Warning $_.Exception.Message }
           Stop-Process $p -Force -ErrorAction SilentlyContinue
 
       - name: Generate checksum
         shell: pwsh
         run: |
-          $exe=(Resolve-Path '.\\lanproxy-native-v350\\局域网代理共享助手.exe').Path
+          $exe=(Resolve-Path '.\lanproxy-native-v350\局域网代理共享助手.exe').Path
           $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "SHA256=$hash"
-          Set-Content '.\\lanproxy-native-v350\\sha256.txt' $hash -Encoding ascii
+          Set-Content '.\lanproxy-native-v350\sha256.txt' $hash -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
           name: LANProxyShareAssistant-v3.5.0-balanced-ratio-logo
           path: |
-            .\\lanproxy-native-v350\\局域网代理共享助手.exe
-            .\\lanproxy-native-v350\\sha256.txt
-            .\\lanproxy-native-v350\\v350-preview.png
+            .\lanproxy-native-v350\局域网代理共享助手.exe
+            .\lanproxy-native-v350\sha256.txt
+            .\lanproxy-native-v350\v350-preview.png
           if-no-files-found: error
