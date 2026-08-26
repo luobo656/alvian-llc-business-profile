@@ -1,0 +1,141 @@
+name: LANProxy Native v3.3 Direct2D UI
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v330-direct2d
+    paths:
+      - 'lanproxy-native-v310/**'
+      - '.github/workflows/lanproxy-native-v330.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild v3.2 source and apply Direct2D UI changes
+        shell: pwsh
+        run: |
+          $src = '.\\lanproxy-native-v310\\src'
+          if (Test-Path $src) { Remove-Item $src -Recurse -Force }
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+
+          $parts = Get-ChildItem '.\\lanproxy-native-v310\\main.part*' | Sort-Object Name
+          if ($parts.Count -ne 4) { throw "Expected 4 main payload parts, found $($parts.Count)" }
+          $mainB64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes('.\\lanproxy-native-v310\\main.go.gz', [Convert]::FromBase64String($mainB64))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\\lanproxy-native-v310\\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v310'); (r/'ui_v320.patch').write_bytes(gzip.decompress(base64.b64decode((r/'ui_v320.patch.gz.b64').read_text(encoding='utf-8').strip())))"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not decode v3.2 UI patch' }
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'v3.2 UI patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'v3.2 UI patch failed' }
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/activity_numeric.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Activity patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/activity_numeric.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Activity patch failed' }
+
+          $v32Hash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($v32Hash -ne '3540a2d52e8a8b38e2f2d951ecf55380ef8e10b7cb72f698c3e0638c90ecd955') { throw "v3.2 source hash mismatch: $v32Hash" }
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v310'); (r/'v330_direct2d.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v330_direct2d.patch.gz.b64').read_text(encoding='utf-8').strip())))"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not decode v3.3 patch' }
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/v330_direct2d.patch
+          if ($LASTEXITCODE -ne 0) { throw 'v3.3 patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/v330_direct2d.patch
+          if ($LASTEXITCODE -ne 0) { throw 'v3.3 patch failed' }
+
+          $iconParts = Get-ChildItem '.\\lanproxy-native-v310\\icon.part*' | Sort-Object Name
+          $iconB64 = ($iconParts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes((Join-Path (Resolve-Path $src) 'app.ico'), [Convert]::FromBase64String($iconB64))
+          Copy-Item '.\\lanproxy-native-v310\\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\\lanproxy-native-v310\\go.mod' (Join-Path $src 'go.mod') -Force
+
+          $mainHash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $iconHash=(Get-FileHash (Join-Path $src 'app.ico') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "v3.3 main.go SHA256=$mainHash"
+          if ($mainHash -ne '9360829c7c6d37b8b6f462b74bd1fc8d1d3897012c01955418a09619449fff5b') { throw 'v3.3 source hash mismatch' }
+          if ($iconHash -ne '75ecc7fdf75d981f0cc231edda24357592f93889abfde02902d97535a7b389db') { throw 'Icon hash mismatch' }
+
+      - name: Embed icon and administrator manifest
+        shell: pwsh
+        run: |
+          Set-Location .\\lanproxy-native-v310\\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if (-not (Test-Path '.\\resource_windows_amd64.syso')) { throw 'resource syso was not created' }
+
+      - name: Build lightweight single EXE
+        shell: pwsh
+        run: |
+          Set-Location .\\lanproxy-native-v310\\src
+          $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\\局域网代理共享助手.exe' .
+          $app=Get-Item '..\\局域网代理共享助手.exe'
+          Write-Host "EXE size=$($app.Length) bytes"
+          if ($app.Length -gt 10000000) { throw 'Native EXE unexpectedly exceeds 10 MB' }
+
+      - name: Runtime and Direct2D responsiveness smoke test
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\\lanproxy-native-v310\\局域网代理共享助手.exe').Path
+          $p=Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $deadline=(Get-Date).AddSeconds(12)
+          do { Start-Sleep -Milliseconds 400; $p.Refresh(); if($p.HasExited){throw "App exited early code $($p.ExitCode)"} } until($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+          if($p.MainWindowHandle -eq 0){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'No main window appeared' }
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NC { [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,IntPtr l,uint f,uint t,out IntPtr r); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r); public struct RECT { public int Left,Top,Right,Bottom; } }'
+          $r=[IntPtr]::Zero
+          if([NC]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$r) -eq [IntPtr]::Zero){throw 'UI not responding immediately'}
+          Start-Sleep -Seconds 8
+          $p.Refresh(); if($p.HasExited){throw 'App exited during startup scan'}
+          $r=[IntPtr]::Zero
+          if([NC]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$r) -eq [IntPtr]::Zero){throw 'UI froze during scan'}
+
+          try {
+            Add-Type -AssemblyName System.Drawing
+            $wr=New-Object NC+RECT
+            if([NC]::GetWindowRect($p.MainWindowHandle,[ref]$wr)){
+              $w=$wr.Right-$wr.Left; $h=$wr.Bottom-$wr.Top
+              $bmp=New-Object Drawing.Bitmap $w,$h
+              $g=[Drawing.Graphics]::FromImage($bmp)
+              $g.CopyFromScreen($wr.Left,$wr.Top,0,0,(New-Object Drawing.Size $w,$h))
+              $shot=(Resolve-Path '.\\lanproxy-native-v310').Path+'\\v330-preview.png'
+              $bmp.Save($shot,[Drawing.Imaging.ImageFormat]::Png)
+              $g.Dispose(); $bmp.Dispose()
+              Write-Host "Screenshot saved: $shot"
+            }
+          } catch { Write-Warning "Screenshot unavailable: $($_.Exception.Message)" }
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\\lanproxy-native-v310\\局域网代理共享助手.exe').Path
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256=$hash"
+          Set-Content '.\\lanproxy-native-v310\\sha256.txt' $hash -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.3.0-direct2d-ui
+          path: |
+            .\\lanproxy-native-v310\\局域网代理共享助手.exe
+            .\\lanproxy-native-v310\\sha256.txt
+            .\\lanproxy-native-v310\\v330-preview.png
+          if-no-files-found: warn
