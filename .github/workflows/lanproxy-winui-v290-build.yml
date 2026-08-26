@@ -35,6 +35,25 @@ jobs:
       - name: Publish portable x64
         shell: pwsh
         run: dotnet publish "$env:PROJECT_PATH" -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:PublishSingleFile=false -p:PublishTrimmed=false -o .\lanproxy-v290-build\dist
+      - name: Startup smoke test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Where-Object { $_.Name -like '*代理共享助手*' } | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Select-Object -First 1 }
+          if (-not $exe) { throw 'EXE not found for smoke test.' }
+          $started = Get-Date
+          Write-Host "Launching $($exe.FullName)"
+          $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
+          Start-Sleep -Seconds 6
+          $p.Refresh()
+          if ($p.HasExited) {
+            Write-Host "Process exited early with code $($p.ExitCode)"
+            Write-Host 'Recent Application events:'
+            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$started.AddSeconds(-2)} -ErrorAction SilentlyContinue | Select-Object -First 20 TimeCreated, Id, ProviderName, LevelDisplayName, Message | Format-List | Out-String -Width 240 | Write-Host
+            throw "Startup smoke test failed. ExitCode=$($p.ExitCode)"
+          }
+          Write-Host "Process remained alive for 6 seconds; startup smoke test passed. PID=$($p.Id)"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
       - name: Pack portable zip
         shell: pwsh
         run: |
