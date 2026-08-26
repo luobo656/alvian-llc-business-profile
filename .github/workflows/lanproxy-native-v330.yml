@@ -5,7 +5,7 @@ on:
     branches:
       - lanproxy-native-v330-direct2d
     paths:
-      - 'lanproxy-native-v330/**'
+      - 'lanproxy-native-v330/source.chunk*'
       - 'lanproxy-native-v310/icon.part*'
       - 'lanproxy-native-v310/app.manifest'
       - 'lanproxy-native-v310/go.mod'
@@ -31,8 +31,28 @@ jobs:
           if (Test-Path $src) { Remove-Item $src -Recurse -Force }
           New-Item -ItemType Directory -Path $src -Force | Out-Null
 
-          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v330'); raw=base64.b64decode((r/'main.go.gz.b64').read_text(encoding='utf-8').strip()); (r/'src'/'main.go').write_bytes(gzip.decompress(raw))"
-          if ($LASTEXITCODE -ne 0) { throw 'Could not decode v3.3 source' }
+          $chunkNames = @('source.chunk00x','source.chunk01','source.chunk02','source.chunk03','source.chunk04','source.chunk05','source.chunk06','source.chunk07','source.chunk08')
+          $expected = @(4000,4000,4000,4000,4000,4000,4000,4000,2880)
+          $segments = @()
+          for($i=0; $i -lt $chunkNames.Count; $i++) {
+            $path = Join-Path '.\lanproxy-native-v330' $chunkNames[$i]
+            if(-not (Test-Path $path)) { throw "Missing source chunk: $path" }
+            $s = (Get-Content $path -Raw).Trim()
+            Write-Host "$($chunkNames[$i]) length=$($s.Length)"
+            if($s.Length -ne $expected[$i]) { throw "Unexpected length for $($chunkNames[$i]): $($s.Length)" }
+            $segments += $s
+          }
+          $all = $segments -join ''
+          if($all.Length -ne 34880) { throw "Combined payload length mismatch: $($all.Length)" }
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v330\main.go.gz', [Convert]::FromBase64String($all))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v330\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
 
           $iconParts = Get-ChildItem '.\lanproxy-native-v310\icon.part*' | Sort-Object Name
           if ($iconParts.Count -ne 3) { throw "Expected 3 icon payload parts, found $($iconParts.Count)" }
