@@ -21,6 +21,22 @@ jobs:
       - name: Build and validate standard MSVC executable
         shell: pwsh
         run: .\.github\scripts\build-v370-cpp.ps1
+      - name: Defender scan exact binary through ASCII path
+        shell: pwsh
+        run: |
+          $src = Resolve-Path '.\lanproxy-native-v370-cpp\局域网代理共享助手.exe'
+          $scan = Join-Path $env:TEMP 'LANProxyShareAssistant-v370-scan.exe'
+          Copy-Item $src $scan -Force
+          $mp = (Get-Command "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -ErrorAction SilentlyContinue).Source
+          if (-not $mp) {
+            $mp = Get-ChildItem 'C:\ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe' -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $mp) { throw 'Microsoft Defender command-line scanner not found' }
+          & $mp -Scan -ScanType 3 -File $scan
+          $code = $LASTEXITCODE
+          Remove-Item $scan -Force -ErrorAction SilentlyContinue
+          Write-Host "Defender exact-binary scan exit=$code"
+          if ($code -ne 0) { throw "Defender detected or failed to scan the binary (exit $code)" }
       - uses: actions/upload-artifact@v4
         with:
           name: LANProxyShareAssistant-v3.7.0-msvc-cpp
