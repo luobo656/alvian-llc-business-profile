@@ -1,0 +1,38 @@
+name: LANProxy Native v3.4 Ratio Logo
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v340-ratio-logo
+    paths:
+      - '.github/workflows/lanproxy-native-v340.yml'
+      - 'lanproxy-native-v340/**'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild v3.3 source and print target sections
+        shell: pwsh
+        run: |
+          $src = '.\tmp-v340'
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+          $chunkNames = @('source.chunk00x','source.chunk01','source.chunk02','source.chunk03','source.chunk04','source.chunk05','source.chunk06','source.chunk07','source.chunk08')
+          $segments = @()
+          foreach($n in $chunkNames){ $segments += (Get-Content (Join-Path '.\lanproxy-native-v330' $n) -Raw).Trim() }
+          $all = $segments -join ''
+          [IO.File]::WriteAllBytes((Join-Path $src 'main.go.gz'), [Convert]::FromBase64String($all))
+          $in=[IO.File]::OpenRead((Resolve-Path (Join-Path $src 'main.go.gz')))
+          try { $gz=New-Object IO.Compression.GzipStream($in,[IO.Compression.CompressionMode]::Decompress); try { $out=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go')); try{$gz.CopyTo($out)}finally{$out.Dispose()} } finally{$gz.Dispose()} } finally{$in.Dispose()}
+          $lines=Get-Content (Join-Path $src 'main.go')
+          for($i=0;$i -lt $lines.Count;$i++){
+            if($lines[$i] -match 'appVersion|func drawWifi|func drawHeader|CreateWindowExW\.Call'){
+              Write-Host "----- around line $($i+1) -----"
+              $start=[Math]::Max(0,$i-4); $end=[Math]::Min($lines.Count-1,$i+55)
+              for($j=$start;$j -le $end;$j++){ Write-Host ("{0:D4}: {1}" -f ($j+1),$lines[$j]) }
+            }
+          }
