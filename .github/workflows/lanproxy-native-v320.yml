@@ -1,0 +1,130 @@
+name: LANProxy Native v3.2 Final UI
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v320-ui-polish
+    paths:
+      - 'lanproxy-native-v310/**'
+      - '.github/workflows/lanproxy-native-v320.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild source and apply UI-only changes
+        shell: pwsh
+        run: |
+          $src = '.\lanproxy-native-v310\src'
+          if (Test-Path $src) { Remove-Item $src -Recurse -Force }
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+
+          $parts = Get-ChildItem '.\lanproxy-native-v310\main.part*' | Sort-Object Name
+          if ($parts.Count -ne 4) { throw "Expected 4 main payload parts, found $($parts.Count)" }
+          $mainB64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v310\main.go.gz', [Convert]::FromBase64String($mainB64))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v310\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v310'); (r/'ui_v320.patch').write_bytes(gzip.decompress(base64.b64decode((r/'ui_v320.patch.gz.b64').read_text(encoding='utf-8').strip())))"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not decode UI patch' }
+
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'UI patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/ui_v320.patch
+          if ($LASTEXITCODE -ne 0) { throw 'UI patch failed' }
+
+          git apply --check --directory=lanproxy-native-v310/src lanproxy-native-v310/activity_numeric.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Activity wording patch validation failed' }
+          git apply --directory=lanproxy-native-v310/src lanproxy-native-v310/activity_numeric.patch
+          if ($LASTEXITCODE -ne 0) { throw 'Activity wording patch failed' }
+
+          $iconParts = Get-ChildItem '.\lanproxy-native-v310\icon.part*' | Sort-Object Name
+          if ($iconParts.Count -ne 3) { throw "Expected 3 icon payload parts, found $($iconParts.Count)" }
+          $iconB64 = ($iconParts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes((Join-Path (Resolve-Path $src) 'app.ico'), [Convert]::FromBase64String($iconB64))
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+          $mainHash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $iconHash=(Get-FileHash (Join-Path $src 'app.ico') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "main.go SHA256=$mainHash"
+          Write-Host "app.ico SHA256=$iconHash"
+          if ($mainHash -ne '3540a2d52e8a8b38e2f2d951ecf55380ef8e10b7cb72f698c3e0638c90ecd955') { throw 'Final v3.2 source hash mismatch' }
+          if ($iconHash -ne '75ecc7fdf75d981f0cc231edda24357592f93889abfde02902d97535a7b389db') { throw 'Icon hash mismatch' }
+
+      - name: Embed icon and manifest
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v310\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if (-not (Test-Path '.\resource_windows_amd64.syso')) { throw 'resource syso was not created' }
+
+      - name: Build single native EXE
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v310\src
+          $env:GOOS='windows'
+          $env:GOARCH='amd64'
+          $env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $app=Get-Item '..\局域网代理共享助手.exe'
+          Write-Host "EXE size=$($app.Length) bytes"
+          if ($app.Length -gt 10000000) { throw 'Native EXE unexpectedly exceeds 10 MB' }
+
+      - name: UI responsiveness smoke test
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path '.\lanproxy-native-v310\局域网代理共享助手.exe').Path
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $deadline=(Get-Date).AddSeconds(12)
+          do {
+            Start-Sleep -Milliseconds 500
+            $p.Refresh()
+            if($p.HasExited){ throw "App exited early code $($p.ExitCode)" }
+          } until($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+          if($p.MainWindowHandle -eq 0){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'No main window appeared' }
+
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NativeCheck { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,IntPtr wParam,IntPtr lParam,uint fuFlags,uint uTimeout,out IntPtr lpdwResult); }'
+          $result=[IntPtr]::Zero
+          $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+          if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI not responding immediately after launch' }
+          Start-Sleep -Seconds 8
+          $p.Refresh()
+          if($p.HasExited){ throw 'App exited during startup scan' }
+          $result=[IntPtr]::Zero
+          $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+          if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI froze during background scan' }
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\lanproxy-native-v310\局域网代理共享助手.exe').Path
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256=$hash"
+          Set-Content '.\lanproxy-native-v310\sha256.txt' $hash -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.2.0-native-ui-polish
+          path: |
+            .\lanproxy-native-v310\局域网代理共享助手.exe
+            .\lanproxy-native-v310\sha256.txt
+          if-no-files-found: error
