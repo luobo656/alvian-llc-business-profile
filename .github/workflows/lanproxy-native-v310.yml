@@ -1,0 +1,113 @@
+name: LANProxy Native v3.1
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v310-responsive
+    paths:
+      - 'lanproxy-native-v310/**'
+      - '.github/workflows/lanproxy-native-v310.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Rebuild source
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem .\lanproxy-native-v310\source.part* | Sort-Object Name
+          if (-not $parts) { throw 'Source chunks not found.' }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v310\source.zip', [Convert]::FromBase64String($b64))
+          New-Item -ItemType Directory -Path .\lanproxy-native-v310\src -Force | Out-Null
+          Expand-Archive .\lanproxy-native-v310\source.zip .\lanproxy-native-v310\src -Force
+
+      - name: Build Windows resources
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v310\src
+          $rc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter rc.exe -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match '\\x64\\rc\.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $rc) { throw 'rc.exe not found' }
+          & $rc.FullName /nologo /foapp.res app.rc
+          if ($LASTEXITCODE -ne 0) { throw "rc.exe failed: $LASTEXITCODE" }
+
+          $candidates = @()
+          if (Test-Path "${env:ProgramFiles}\Microsoft Visual Studio") { $candidates += Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -Recurse -Filter cvtres.exe -ErrorAction SilentlyContinue }
+          if (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio") { $candidates += Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -Recurse -Filter cvtres.exe -ErrorAction SilentlyContinue }
+          $cvtres = $candidates | Where-Object { $_.FullName -match '\\Hostx64\\x64\\cvtres\.exe$' } | Sort-Object FullName | Select-Object -Last 1
+          if (-not $cvtres) { throw 'cvtres.exe not found' }
+          & $cvtres.FullName /MACHINE:X64 /NOLOGO /OUT:resource_windows_amd64.syso app.res
+          if ($LASTEXITCODE -ne 0) { throw "cvtres failed: $LASTEXITCODE" }
+
+      - name: Build native EXE
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v310\src
+          $env:GOOS='windows'
+          $env:GOARCH='amd64'
+          $env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          Get-Item '..\局域网代理共享助手.exe' | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: UI responsiveness smoke test
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path '.\lanproxy-native-v310\局域网代理共享助手.exe').Path
+          $p = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $deadline=(Get-Date).AddSeconds(12)
+          do {
+            Start-Sleep -Milliseconds 500
+            $p.Refresh()
+            if($p.HasExited){ throw "App exited early code $($p.ExitCode)" }
+          } until($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+          if($p.MainWindowHandle -eq 0){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'No main window appeared' }
+
+          Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class NativeCheck {
+            [DllImport("user32.dll", SetLastError=true)]
+            public static extern IntPtr SendMessageTimeout(
+              IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+              uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+          }
+          "@
+          $result=[IntPtr]::Zero
+          $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+          if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI message loop is not responding immediately after launch' }
+
+          Start-Sleep -Seconds 8
+          $p.Refresh()
+          if($p.HasExited){ throw 'App exited during background startup scan' }
+          $result=[IntPtr]::Zero
+          $r=[NativeCheck]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+          if($r -eq [IntPtr]::Zero){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'UI froze during background startup scan' }
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Check resources and checksum
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path '.\lanproxy-native-v310\局域网代理共享助手.exe').Path
+          $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+          Write-Host "Description=$($info.FileDescription) Version=$($info.FileVersion) Product=$($info.ProductName)"
+          if($info.FileVersion -notlike '3.1.0*'){ throw 'VERSIONINFO missing or incorrect' }
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256=$hash"
+          Set-Content '.\lanproxy-native-v310\sha256.txt' $hash -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.1.0-native-win-x64
+          path: |
+            .\lanproxy-native-v310\局域网代理共享助手.exe
+            .\lanproxy-native-v310\sha256.txt
+          if-no-files-found: error
