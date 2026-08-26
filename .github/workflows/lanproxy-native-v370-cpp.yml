@@ -1,0 +1,30 @@
+name: LANProxy Native v3.7 MSVC C++
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v370-cpp
+    paths:
+      - 'lanproxy-native-v370-cpp/**'
+      - '.github/scripts/build-v370-cpp.ps1'
+      - '.github/workflows/lanproxy-native-v370-cpp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate standard MSVC executable
+        shell: pwsh
+        run: .\.github\scripts\build-v370-cpp.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.7.0-msvc-cpp
+          path: |
+            .\lanproxy-native-v370-cpp\局域网代理共享助手.exe
+            .\lanproxy-native-v370-cpp\sha256.txt
+          if-no-files-found: error
