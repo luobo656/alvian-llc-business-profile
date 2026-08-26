@@ -1,0 +1,62 @@
+name: LANProxy WinUI v2.9 build
+
+on:
+  push:
+    branches:
+      - lanproxy-winui-v290-build-temp
+    paths:
+      - 'lanproxy-v290-build/**'
+      - '.github/workflows/lanproxy-winui-v290-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Rebuild source archive
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem .\lanproxy-v290-build\source.part* | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('.\lanproxy-v290-build\source.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path .\lanproxy-v290-build\source.zip -DestinationPath .\lanproxy-v290-build\src -Force
+          $proj = Get-ChildItem .\lanproxy-v290-build\src -Recurse -Filter LANProxyShareAssistant.csproj | Select-Object -First 1
+          if (-not $proj) { throw 'LANProxyShareAssistant.csproj not found after extraction.' }
+          "PROJECT_PATH=$($proj.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore "$env:PROJECT_PATH"
+      - name: Publish portable x64
+        shell: pwsh
+        run: dotnet publish "$env:PROJECT_PATH" -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:PublishSingleFile=false -p:PublishTrimmed=false -o .\lanproxy-v290-build\dist
+      - name: Pack portable zip
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem .\lanproxy-v290-build\dist -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw 'EXE not found.' }
+          $readme = @'
+          局域网代理共享助手 v2.9.0
+          
+          使用方法：
+          1. 完整解压本压缩包。
+          2. 双击局域网代理共享助手.exe。
+          3. 软件会自动检测局域网与本机代理。
+          4. 开启共享后，手机在同一局域网内设置 HTTP 手动代理。
+          
+          本版本重点优化：紧凑布局、设备刷新实时反馈、操作提示自动消失、手机设置步骤等权重显示。
+          '@
+          Set-Content -Path .\lanproxy-v290-build\dist\使用说明.txt -Value $readme -Encoding UTF8
+          $targetExe = '.\lanproxy-v290-build\dist\局域网代理共享助手.exe'
+          if ($exe.FullName -ne (Resolve-Path .\lanproxy-v290-build\dist).Path + '\局域网代理共享助手.exe') { Copy-Item $exe.FullName $targetExe -Force }
+          Compress-Archive -Path .\lanproxy-v290-build\dist\* -DestinationPath .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_Portable.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v2.9.0-win-x64
+          path: .\lanproxy-v290-build\LANProxyShareAssistant_v2.9.0_WinUI3_Portable.zip
+          if-no-files-found: error
