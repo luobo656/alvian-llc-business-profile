@@ -1,0 +1,143 @@
+name: LANProxy WinUI v2.9.1 single EXE
+
+on:
+  push:
+    branches:
+      - lanproxy-winui-v291-single-exe
+    paths:
+      - '.github/workflows/lanproxy-winui-v291-single-exe.yml'
+      - 'lanproxy-v290-build/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Rebuild v2.9 source archive
+        shell: pwsh
+        run: |
+          $parts = Get-ChildItem .\lanproxy-v290-build\source.part* | Sort-Object Name
+          if (-not $parts) { throw 'Source chunks not found.' }
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('.\lanproxy-v290-build\source.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive -Path .\lanproxy-v290-build\source.zip -DestinationPath .\lanproxy-v291-single\src -Force
+          $proj = Get-ChildItem .\lanproxy-v291-single\src -Recurse -Filter LANProxyShareAssistant.csproj | Select-Object -First 1
+          if (-not $proj) { throw 'LANProxyShareAssistant.csproj not found after extraction.' }
+          "PROJECT_PATH=$($proj.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SOURCE_ROOT=$($proj.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Apply v2.9.1 user-facing changes
+        shell: pwsh
+        run: |
+          $xamlPath = Join-Path $env:SOURCE_ROOT 'MainWindow.xaml'
+          $codePath = Join-Path $env:SOURCE_ROOT 'MainWindow.xaml.cs'
+          $modelPath = Join-Path $env:SOURCE_ROOT 'Models\AppModels.cs'
+          $projPath = $env:PROJECT_PATH
+
+          $xaml = Get-Content $xamlPath -Raw -Encoding UTF8
+          $xaml = $xaml.Replace('v2.9.0', 'v2.9.1')
+          $oldTile = '<TextBlock Text="代理连接" Style="{StaticResource CaptionTextStyle}" ToolTipService.ToolTip="这台设备当前通过共享代理维持的 TCP 连接数；一台设备通常会同时存在多个连接。" /><TextBlock x:Name="DevicesConnectionsText" Text="0" FontFamily="Segoe UI Variable Display" FontSize="29" FontWeight="SemiBold" />'
+          $newTile = '<TextBlock Text="网络活跃" Style="{StaticResource CaptionTextStyle}" ToolTipService.ToolTip="表示已接入设备当前是否正在通过共享网络访问内容。" /><TextBlock x:Name="DevicesConnectionsText" Text="空闲" FontFamily="Segoe UI Variable Display" FontSize="25" FontWeight="SemiBold" />'
+          if (-not $xaml.Contains($oldTile)) { throw 'Expected device connection tile was not found in XAML.' }
+          $xaml = $xaml.Replace($oldTile, $newTile)
+          Set-Content $xamlPath $xaml -Encoding UTF8
+
+          $code = Get-Content $codePath -Raw -Encoding UTF8
+          $code = $code.Replace('LAN Proxy Share Assistant v2.9.0 initialized', 'LAN Proxy Share Assistant v2.9.1 initialized')
+          $oldCode = "var connectionsText = online.Sum(x => x.ActiveConnections).ToString();`r`n            if (DevicesConnectionsText.Text != connectionsText) DevicesConnectionsText.Text = connectionsText;"
+          $newCode = "var networkActivityText = online.Sum(x => x.ActiveConnections) > 0 ? \"活跃\" : \"空闲\";`r`n            if (DevicesConnectionsText.Text != networkActivityText) DevicesConnectionsText.Text = networkActivityText;"
+          if (-not $code.Contains($oldCode)) {
+            $oldCode = "var connectionsText = online.Sum(x => x.ActiveConnections).ToString();`n            if (DevicesConnectionsText.Text != connectionsText) DevicesConnectionsText.Text = connectionsText;"
+            $newCode = "var networkActivityText = online.Sum(x => x.ActiveConnections) > 0 ? \"活跃\" : \"空闲\";`n            if (DevicesConnectionsText.Text != networkActivityText) DevicesConnectionsText.Text = networkActivityText;"
+          }
+          if (-not $code.Contains($oldCode)) { throw 'Expected connection summary code was not found.' }
+          $code = $code.Replace($oldCode, $newCode)
+          Set-Content $codePath $code -Encoding UTF8
+
+          $model = Get-Content $modelPath -Raw -Encoding UTF8
+          $oldStatus = 'public string StatusText => IsOnline ? $"在线 · {ActiveConnections} 个代理连接" : "最近离线";'
+          $newStatus = "public string StatusText => IsOnline`r`n        ? (ActiveConnections > 0 ? \"在线 · 网络活跃\" : \"在线 · 暂无活动\")`r`n        : \"最近离线\";"
+          if (-not $model.Contains($oldStatus)) { throw 'Expected device status text was not found.' }
+          $model = $model.Replace($oldStatus, $newStatus)
+          Set-Content $modelPath $model -Encoding UTF8
+
+          $proj = Get-Content $projPath -Raw -Encoding UTF8
+          $proj = $proj.Replace('<Version>2.9.0</Version>', '<Version>2.9.1</Version>')
+          $proj = $proj.Replace('<FileVersion>2.9.0.0</FileVersion>', '<FileVersion>2.9.1.0</FileVersion>')
+          $proj = $proj.Replace('<AssemblyVersion>2.9.0.0</AssemblyVersion>', '<AssemblyVersion>2.9.1.0</AssemblyVersion>')
+          if (-not $proj.Contains('<PublishSingleFile>true</PublishSingleFile>')) { throw 'PublishSingleFile project setting missing.' }
+          Set-Content $projPath $proj -Encoding UTF8
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore "$env:PROJECT_PATH"
+
+      - name: Publish one-file self-contained x64 EXE
+        shell: pwsh
+        run: |
+          dotnet publish "$env:PROJECT_PATH" -c Release -r win-x64 --self-contained true `
+            -p:WindowsAppSDKSelfContained=true `
+            -p:PublishSingleFile=true `
+            -p:IncludeAllContentForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -o .\lanproxy-v291-single\dist
+          Write-Host 'Publish output:'
+          Get-ChildItem .\lanproxy-v291-single\dist | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Verify single EXE output
+        shell: pwsh
+        run: |
+          $appExe = '.\lanproxy-v291-single\dist\局域网代理共享助手.exe'
+          if (-not (Test-Path $appExe)) { throw 'Single application EXE not found.' }
+          $app = Get-Item $appExe
+          Write-Host "Single EXE size=$($app.Length) bytes"
+          if ($app.Length -lt 50000000) { throw "Single EXE is unexpectedly small ($($app.Length) bytes); dependencies may not be bundled." }
+          $otherRuntimeFiles = Get-ChildItem .\lanproxy-v291-single\dist -File | Where-Object { $_.Name -ne '局域网代理共享助手.exe' -and $_.Extension -notin '.pdb','.xml' }
+          if ($otherRuntimeFiles) {
+            Write-Host 'Additional publish files exist, but the next isolated smoke test will prove whether the EXE is independently distributable:'
+            $otherRuntimeFiles | Select-Object Name,Length | Format-Table -AutoSize
+          }
+
+      - name: Isolated single-EXE startup smoke test
+        shell: pwsh
+        run: |
+          $standalone = '.\lanproxy-v291-single\standalone'
+          New-Item -ItemType Directory -Path $standalone -Force | Out-Null
+          Copy-Item '.\lanproxy-v291-single\dist\局域网代理共享助手.exe' (Join-Path $standalone '局域网代理共享助手.exe') -Force
+          $appExe = (Resolve-Path (Join-Path $standalone '局域网代理共享助手.exe')).Path
+          Write-Host "Launching ONLY this file from an isolated directory: $appExe"
+          $started = Get-Date
+          $p = Start-Process -FilePath $appExe -WorkingDirectory $standalone -PassThru
+          Start-Sleep -Seconds 8
+          $p.Refresh()
+          if ($p.HasExited) {
+            Write-Host "Process exited early with code $($p.ExitCode)"
+            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$started.AddSeconds(-2)} -ErrorAction SilentlyContinue | Select-Object -First 25 TimeCreated,Id,ProviderName,LevelDisplayName,Message | Format-List | Out-String -Width 260 | Write-Host
+            throw "Standalone single-EXE smoke test failed. ExitCode=$($p.ExitCode)"
+          }
+          Write-Host "Standalone single-EXE startup passed. PID=$($p.Id)"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash '.\lanproxy-v291-single\dist\局域网代理共享助手.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256=$hash"
+          Set-Content '.\lanproxy-v291-single\sha256.txt' $hash -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v2.9.1-single-exe-win-x64
+          path: |
+            .\lanproxy-v291-single\dist\局域网代理共享助手.exe
+            .\lanproxy-v291-single\sha256.txt
+          if-no-files-found: error
