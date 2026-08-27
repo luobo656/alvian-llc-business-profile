@@ -1,0 +1,187 @@
+name: LANProxy Native v3.3.6 Rounded Alias Tray Fix
+
+on:
+  push:
+    branches: [lanproxy-native-v336-rounded-alias]
+    paths:
+      - 'lanproxy-native-v336/**'
+      - '.github/workflows/lanproxy-native-v336.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild v3.3.5 and apply v3.3.6 patch
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\lanproxy-native-v336'; $src=Join-Path $root 'src'
+          if(Test-Path $src){Remove-Item $src -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v336/src lanproxy-native-v334/v334.build.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.4 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v336/src lanproxy-native-v335/v335.build.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.5 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h335=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V335_SOURCE_SHA256=$h335"
+          if($h335 -ne '219e4e621a8e43e67054cb5e680f53348e053f459e7a2842559b4fd46bf7437e'){throw "unexpected v3.3.5 source $h335"}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.patch.gz.b64').read_text().strip())))"
+          git apply --check --directory=lanproxy-native-v336/src lanproxy-native-v336/v336.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.6 patch check failed'}
+          git apply --directory=lanproxy-native-v336/src lanproxy-native-v336/v336.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.6 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V336_SOURCE_SHA256=$h"
+          if($h -ne 'cd620c352375ac91fd96c4a73796d795db5dbc2a7c86b12fc59f90e7dce455ab'){throw "source hash mismatch $h"}
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+      - name: Verify device alias persistence
+        shell: pwsh
+        run: |
+          @'
+          //go:build windows
+          package main
+          import (
+            "encoding/json"
+            "testing"
+          )
+          func TestDeviceAliasSurvivesIPChangeByMAC(t *testing.T) {
+            cfg = defaultConfig()
+            d1 := ConnectedDevice{IP:"192.168.3.50", MAC:"AA-BB-CC-DD-EE-FF", HostName:"phone.local"}
+            setDeviceAlias(d1, "我的手机")
+            raw, _ := json.Marshal(cfg)
+            var loaded Config
+            if err := json.Unmarshal(raw, &loaded); err != nil { t.Fatal(err) }
+            cfg = loaded
+            d2 := ConnectedDevice{IP:"192.168.3.88", MAC:"AA:BB:CC:DD:EE:FF"}
+            if got := deviceAlias(d2); got != "我的手机" { t.Fatalf("alias=%q", got) }
+          }
+          func TestDeviceAliasCanBeCleared(t *testing.T) {
+            cfg = defaultConfig()
+            d := ConnectedDevice{IP:"192.168.3.50", MAC:"11:22:33:44:55:66"}
+            setDeviceAlias(d, "平板")
+            setDeviceAlias(d, "")
+            if got := deviceAlias(d); got != "" { t.Fatalf("alias not cleared: %q", got) }
+          }
+          '@ | Set-Content '.\lanproxy-native-v336\src\main_test.go' -Encoding utf8
+          Set-Location .\lanproxy-native-v336\src
+          go test .
+          if($LASTEXITCODE -ne 0){throw 'device alias tests failed'}
+          Remove-Item '.\main_test.go' -Force
+
+      - name: Generate and embed product icon
+        shell: pwsh
+        run: |
+          python -m pip install pillow --disable-pip-version-check -q
+          @'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          def mk(size):
+              q=4; S=size*q; im=Image.new('RGBA',(S,S)); mask=Image.new('L',(S,S)); md=ImageDraw.Draw(mask); pad=int(S*.055); md.rounded_rectangle((pad,pad,S-pad,S-pad),radius=int(S*.22),fill=255)
+              bg=Image.new('RGBA',(S,S)); px=bg.load(); a=(34,119,238); b=(15,89,205)
+              for y in range(S):
+                  t=y/max(1,S-1); c=tuple(round(a[i]*(1-t)+b[i]*t) for i in range(3))+(255,)
+                  for x in range(S): px[x,y]=c
+              im=Image.composite(bg,im,mask); d=ImageDraw.Draw(im); W=(255,255,255,255); F=(225,239,255,255); sc=lambda v:int(v*S)
+              def rr(box,r,w=.03): d.rounded_rectangle(tuple(sc(v) for v in box),radius=max(1,sc(r)),outline=W,width=max(1,sc(w)))
+              rr((.405,.10,.595,.33),.033,.028); d.line((sc(.46),sc(.145),sc(.54),sc(.145)),fill=F,width=max(1,sc(.012))); d.ellipse((sc(.487),sc(.285),sc(.513),sc(.311)),fill=W)
+              for box,wd in [((.23,.28,.77,.68),.037),((.31,.36,.69,.66),.038),((.39,.44,.61,.64),.04)]: d.arc(tuple(sc(v) for v in box),start=205,end=335,fill=W,width=max(1,sc(wd)))
+              d.ellipse((sc(.475),sc(.61),sc(.525),sc(.66)),fill=W); rr((.20,.70,.80,.85),.035,.03); d.line((sc(.50),sc(.85),sc(.50),sc(.90)),fill=W,width=max(1,sc(.022))); d.line((sc(.38),sc(.90),sc(.62),sc(.90)),fill=W,width=max(1,sc(.028)))
+              return im.resize((size,size),Image.Resampling.LANCZOS)
+          out=Path(r'lanproxy-native-v336/src/app.ico'); mk(256).save(out,format='ICO',sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content '.\lanproxy-native-v336\icon.py' -Encoding utf8
+          python '.\lanproxy-native-v336\icon.py'
+          Set-Location .\lanproxy-native-v336\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if(-not(Test-Path '.\resource_windows_amd64.syso')){throw 'resource embedding failed'}
+
+      - name: Build single EXE
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v336\src
+          $env:GOOS='windows';$env:GOARCH='amd64';$env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $e=Get-Item '..\局域网代理共享助手.exe'; Write-Host "EXE_SIZE=$($e.Length)"; if($e.Length -gt 10000000){throw 'EXE too large'}
+
+      - name: Verify true corners and tray icon
+        shell: pwsh
+        run: |
+          $cfgDir=Join-Path $env:LOCALAPPDATA 'LANProxyShareAssistant'; New-Item -ItemType Directory -Path $cfgDir -Force|Out-Null
+          $cfgPath=Join-Path $cfgDir 'config.json'
+          '{"ip":"","http_local":0,"socks_local":0,"http_lan":18800,"socks_lan":11020,"share_socks":false,"close_behavior":"background","device_aliases":{"mac:AA:BB:CC:DD:EE:FF":"测试手机"}}'|Set-Content $cfgPath -Encoding utf8
+          $exe=(Resolve-Path '.\lanproxy-native-v336\局域网代理共享助手.exe').Path
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -TypeDefinition @'
+          using System; using System.Runtime.InteropServices;
+          public static class V336Native {
+            [StructLayout(LayoutKind.Sequential)] public struct R { public int Left,Top,Right,Bottom; }
+            [StructLayout(LayoutKind.Sequential)] public struct ICONINFO { [MarshalAs(UnmanagedType.Bool)] public bool fIcon; public int xHotspot,yHotspot; public IntPtr hbmMask,hbmColor; }
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out R r);
+            [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+            [DllImport("user32.dll")] public static extern int GetWindowRgn(IntPtr h, IntPtr rgn);
+            [DllImport("gdi32.dll")] public static extern IntPtr CreateRectRgn(int l,int t,int r,int b);
+            [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr h);
+            [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h,int a,out int v,int cb);
+            [DllImport("shell32.dll",CharSet=CharSet.Unicode)] public static extern uint ExtractIconEx(string file,int index,IntPtr[] large,IntPtr[] small,uint n);
+            [DllImport("user32.dll")] public static extern bool GetIconInfo(IntPtr h, out ICONINFO info);
+            [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr h);
+          }
+          '@
+          $large=New-Object IntPtr[] 1; $small=New-Object IntPtr[] 1
+          $cnt=[V336Native]::ExtractIconEx($exe,0,$large,$small,1)
+          if($cnt -lt 1 -or ($small[0] -eq [IntPtr]::Zero -and $large[0] -eq [IntPtr]::Zero)){throw 'embedded tray icon extraction failed'}
+          $ih=if($small[0] -ne [IntPtr]::Zero){$small[0]}else{$large[0]}
+          $ii=New-Object V336Native+ICONINFO
+          if(-not [V336Native]::GetIconInfo($ih,[ref]$ii)){throw 'embedded icon has no icon bitmap'}
+          if($ii.hbmMask -ne [IntPtr]::Zero){[void][V336Native]::DeleteObject($ii.hbmMask)}
+          if($ii.hbmColor -ne [IntPtr]::Zero){[void][V336Native]::DeleteObject($ii.hbmColor)}
+          if($small[0] -ne [IntPtr]::Zero){[void][V336Native]::DestroyIcon($small[0])}; if($large[0] -ne [IntPtr]::Zero){[void][V336Native]::DestroyIcon($large[0])}
+
+          $p=Start-Process $exe -PassThru; $dl=(Get-Date).AddSeconds(15)
+          do{Start-Sleep -Milliseconds 350;$p.Refresh();if($p.HasExited){throw "early exit $($p.ExitCode)"}}until($p.MainWindowHandle -ne 0 -or (Get-Date)-gt$dl); if($p.MainWindowHandle -eq 0){throw 'no window'}
+          $hwnd=$p.MainWindowHandle
+          $pref=0; $hr=[V336Native]::DwmGetWindowAttribute($hwnd,33,[ref]$pref,4)
+          $rgn=[V336Native]::CreateRectRgn(0,0,1,1); $rgnType=[V336Native]::GetWindowRgn($hwnd,$rgn); [void][V336Native]::DeleteObject($rgn)
+          Write-Host "CORNER_PREF=$pref HR=$hr REGION_TYPE=$rgnType"
+          if(-not(($hr -eq 0 -and $pref -eq 2) -or $rgnType -gt 1)){throw 'real window rounding was not applied'}
+
+          [void][V336Native]::PostMessage($hwnd,0x0010,[IntPtr]::Zero,[IntPtr]::Zero); Start-Sleep -Milliseconds 1000; $p.Refresh()
+          if($p.HasExited){throw 'background close exited process'}
+          if([V336Native]::IsWindowVisible($hwnd)){throw 'background close did not hide window'}
+          [void][V336Native]::PostMessage($hwnd,0x800A,[IntPtr]1,[IntPtr]0x0202); Start-Sleep -Milliseconds 700
+          if(-not [V336Native]::IsWindowVisible($hwnd)){throw 'tray restore failed'}
+
+          $wr=New-Object V336Native+R; [void][V336Native]::GetWindowRect($hwnd,[ref]$wr); $w=$wr.Right-$wr.Left; $h=$wr.Bottom-$wr.Top
+          $bmp=New-Object Drawing.Bitmap $w,$h; $g=[Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($wr.Left,$wr.Top,0,0,(New-Object Drawing.Size $w,$h)); $bmp.Save((Resolve-Path '.\lanproxy-native-v336').Path+'\home.png'); $g.Dispose(); $bmp.Dispose()
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $e=(Resolve-Path '.\lanproxy-native-v336\局域网代理共享助手.exe').Path; $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "SHA256=$h"; Set-Content '.\lanproxy-native-v336\sha256.txt' $h -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.3.6-rounded-alias-tray
+          path: |
+            .\lanproxy-native-v336\局域网代理共享助手.exe
+            .\lanproxy-native-v336\sha256.txt
+            .\lanproxy-native-v336\home.png
+          if-no-files-found: error
