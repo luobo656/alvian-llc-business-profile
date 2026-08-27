@@ -1,0 +1,39 @@
+name: Export v339 source
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v339-realtime-polish
+    paths:
+      - '.github/workflows/export-v339-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild v3.3.9 source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $parts = Get-ChildItem lanproxy-native-v338/v338.b64.part* | Sort-Object Name
+          $b64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('v338.patch.gz',[Convert]::FromBase64String($b64))
+          gzip -dc v338.patch.gz > v338.patch
+          git apply v338.patch
+          $parts339 = Get-ChildItem lanproxy-native-v339/v339.b64.part* | Sort-Object Name
+          $b64339 = ($parts339 | ForEach-Object { Get-Content $_.FullName -Raw }) -join ''
+          [IO.File]::WriteAllBytes('v339.patch.gz',[Convert]::FromBase64String($b64339))
+          gzip -dc v339.patch.gz > v339.patch
+          git apply v339.patch
+          Copy-Item main.go out/main.go
+          Copy-Item go.mod out/go.mod
+          if (Test-Path app.manifest) { Copy-Item app.manifest out/app.manifest }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v339-current-source
+          path: out/*
+          retention-days: 90
