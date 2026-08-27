@@ -1,0 +1,44 @@
+name: Export v3.3.3 source
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v334-foolproof
+    paths:
+      - '.github/workflows/export-v333-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild source
+        shell: pwsh
+        run: |
+          $root = '.\lanproxy-native-v333'
+          $outDir = '.\exported-v333'
+          if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          $parts = Get-ChildItem (Join-Path $root 'source.part*') | Sort-Object Name
+          if ($parts.Count -ne 6) { throw "Expected 6 source parts, found $($parts.Count)" }
+          $payload = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $outDir 'main.go.gz'), [Convert]::FromBase64String($payload))
+          $in = [IO.File]::OpenRead((Resolve-Path (Join-Path $outDir 'main.go.gz')))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $outDir) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+          $hash=(Get-FileHash (Join-Path $outDir 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "main.go SHA256=$hash"
+          if ($hash -ne '180a5cdd824e88aff2bf67eaf7ca221a617ec2dfd98ff7bfad636c7d6b0aeb8f') { throw 'source hash mismatch' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v333-source
+          path: .\exported-v333\main.go
+          if-no-files-found: error
