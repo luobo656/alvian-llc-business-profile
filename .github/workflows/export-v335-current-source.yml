@@ -1,0 +1,45 @@
+name: Export v3.3.5 current source
+
+on:
+  push:
+    branches: [lanproxy-native-v335-tray-device-name]
+    paths:
+      - '.github/workflows/export-v335-current-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Rebuild v3.3.5 source
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\lanproxy-native-v335'; $src=Join-Path $root 'src-export'
+          if(Test-Path $src){Remove-Item $src -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v335/src-export lanproxy-native-v334/v334.build.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.4 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v335/src-export lanproxy-native-v335/v335.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.5 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V335_SOURCE_SHA256=$h"
+          if($h -ne '219e4e621a8e43e67054cb5e680f53348e053f459e7a2842559b4fd46bf7437e'){throw "source hash mismatch $h"}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v335-current-source
+          path: .\lanproxy-native-v335\src-export\main.go
+          if-no-files-found: error
