@@ -1,0 +1,52 @@
+name: Export current v3.3.7 source
+
+on:
+  push:
+    branches: [lanproxy-native-v337-tray-menu-restore]
+    paths:
+      - '.github/workflows/export-v337-current-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Rebuild v3.3.7 source
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\export-v337'; $src=Join-Path $root 'src'
+          New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=export-v337/src lanproxy-native-v334/v334.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --directory=export-v337/src lanproxy-native-v335/v335.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+          $parts=Get-ChildItem '.\lanproxy-native-v336\v336.b64.part*' | Sort-Object Name
+          ($parts|%{(Get-Content $_.FullName -Raw).Trim()}) -join '' | Set-Content '.\lanproxy-native-v336\v336.joined.b64' -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.joined.b64').read_text().strip())))"
+          git apply --directory=export-v337/src lanproxy-native-v336/v336.patch
+          gofmt -w (Join-Path $src 'main.go')
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v337'); (r/'v337.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v337.patch.gz.b64').read_text().strip())))"
+          git apply --directory=export-v337/src lanproxy-native-v337/v337.patch
+          gofmt -w (Join-Path $src 'main.go')
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V337_SOURCE_SHA256=$h"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v337-current-source
+          path: .\export-v337\src
+          if-no-files-found: error
