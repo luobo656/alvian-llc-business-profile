@@ -1,0 +1,83 @@
+name: LANProxy v3.3.2 Source Extract
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v332-final-ui
+    paths:
+      - '.github/workflows/lanproxy-native-v332-extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild v3.3.1 source
+        shell: pwsh
+        run: |
+          $src = '.\lanproxy-native-v332\src'
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+          $chunkNames = @('source.chunk00x','source.chunk01','source.chunk02','source.chunk03','source.chunk04','source.chunk05','source.chunk06','source.chunk07','source.chunk08')
+          $expected = @(4000,4000,4000,4000,4000,4000,4000,4000,2880)
+          $segments = @()
+          for($i=0; $i -lt $chunkNames.Count; $i++) {
+            $path = Join-Path '.\lanproxy-native-v330' $chunkNames[$i]
+            $s = (Get-Content $path -Raw).Trim()
+            if($s.Length -ne $expected[$i]) { throw "Unexpected chunk length $($chunkNames[$i])=$($s.Length)" }
+            $segments += $s
+          }
+          $all = $segments -join ''
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v332\main.go.gz', [Convert]::FromBase64String($all))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v332\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+          @'
+          from pathlib import Path
+          p = Path(r'lanproxy-native-v332/src/main.go')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('appVersion = "3.3.0"', 'appVersion = "3.3.1"', 1)
+          s = s.replace(', 1080, 600, 0, 0, hInst, 0)', ', 1040, 700, 0, 0, hInst, 0)', 1)
+          start = s.index('func drawWifi(')
+          end = s.index('\nfunc ', start + 10)
+          logo = r'''func drawWifi(hdc syscall.Handle, x, y int32) {
+              blue := rgb(20, 103, 232)
+              white := rgb(255, 255, 255)
+              soft := rgb(220, 235, 255)
+              fillRounded(hdc, RECT{x, y, x + 38, y + 38}, 10, blue)
+              rounded(hdc, RECT{x + 4, y + 13, x + 15, y + 24}, 2, blue, white)
+              line(hdc, x+3, y+27, x+16, y+27, white, 2)
+              line(hdc, x+6, y+25, x+13, y+25, soft, 1)
+              circle(hdc, x+20, y+20, 2, white, white)
+              line(hdc, x+20, y+18, x+24, y+15, white, 2)
+              line(hdc, x+24, y+15, x+27, y+16, white, 2)
+              line(hdc, x+20, y+22, x+24, y+25, white, 2)
+              line(hdc, x+24, y+25, x+27, y+24, white, 2)
+              line(hdc, x+22, y+20, x+26, y+20, soft, 2)
+              rounded(hdc, RECT{x + 28, y + 10, x + 34, y + 28}, 2, blue, white)
+              line(hdc, x+30, y+13, x+32, y+13, soft, 1)
+              line(hdc, x+30, y+25, x+32, y+25, soft, 1)
+          }
+          '''
+          s = s[:start] + logo + s[end:]
+          p.write_text(s, encoding='utf-8')
+          '@ | Set-Content '.\lanproxy-native-v332\patch_v331.py' -Encoding utf8
+          python '.\lanproxy-native-v332\patch_v331.py'
+          gofmt -w '.\lanproxy-native-v332\src\main.go'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxy-v331-source
+          path: |
+            .\lanproxy-native-v332\src\main.go
+            .\lanproxy-native-v332\src\go.mod
+            .\lanproxy-native-v332\src\app.manifest
