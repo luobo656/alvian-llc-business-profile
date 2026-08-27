@@ -1,0 +1,232 @@
+name: LANProxy Native v3.3.1 Ratio Logo
+
+on:
+  push:
+    branches:
+      - lanproxy-native-v331-ratio-logo
+    paths:
+      - 'lanproxy-native-v330/source.chunk*'
+      - 'lanproxy-native-v310/app.manifest'
+      - 'lanproxy-native-v310/go.mod'
+      - '.github/workflows/lanproxy-native-v331.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild exact v3.3.0 source
+        shell: pwsh
+        run: |
+          $src = '.\lanproxy-native-v331\src'
+          if (Test-Path $src) { Remove-Item $src -Recurse -Force }
+          New-Item -ItemType Directory -Path $src -Force | Out-Null
+
+          $chunkNames = @('source.chunk00x','source.chunk01','source.chunk02','source.chunk03','source.chunk04','source.chunk05','source.chunk06','source.chunk07','source.chunk08')
+          $expected = @(4000,4000,4000,4000,4000,4000,4000,4000,2880)
+          $segments = @()
+          for($i=0; $i -lt $chunkNames.Count; $i++) {
+            $path = Join-Path '.\lanproxy-native-v330' $chunkNames[$i]
+            if(-not (Test-Path $path)) { throw "Missing v3.3 source chunk: $path" }
+            $s = (Get-Content $path -Raw).Trim()
+            if($s.Length -ne $expected[$i]) { throw "Unexpected v3.3 source chunk length: $($chunkNames[$i])=$($s.Length)" }
+            $segments += $s
+          }
+          $all = $segments -join ''
+          if($all.Length -ne 34880) { throw "Combined v3.3 payload length mismatch: $($all.Length)" }
+          [IO.File]::WriteAllBytes('.\lanproxy-native-v331\main.go.gz', [Convert]::FromBase64String($all))
+          $in = [IO.File]::OpenRead((Resolve-Path '.\lanproxy-native-v331\main.go.gz'))
+          try {
+            $gz = New-Object IO.Compression.GzipStream($in, [IO.Compression.CompressionMode]::Decompress)
+            try {
+              $out = [IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'))
+              try { $gz.CopyTo($out) } finally { $out.Dispose() }
+            } finally { $gz.Dispose() }
+          } finally { $in.Dispose() }
+
+          $mainHash=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "base v3.3.0 main.go SHA256=$mainHash"
+          if ($mainHash -ne '9360829c7c6d37b8b6f462b74bd1fc8d1d3897012c01955418a09619449fff5b') { throw 'Base v3.3 source hash mismatch' }
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+      - name: Apply only ratio and logo changes
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          p = Path(r'lanproxy-native-v331/src/main.go')
+          s = p.read_text(encoding='utf-8')
+
+          # Keep v3.3.0 functionality and build path intact; only bump the patch version.
+          if 'appVersion = "3.3.0"' not in s:
+              raise SystemExit('v3.3 version marker not found')
+          s = s.replace('appVersion = "3.3.0"', 'appVersion = "3.3.1"', 1)
+
+          # v3.3.0 was 1080x600 (1.80:1), which looks too wide/flat.
+          # 1040x700 keeps enough width for the advanced page while producing a calmer 1.49:1 desktop-tool proportion.
+          old_size = ', 1080, 600, 0, 0, hInst, 0)'
+          if old_size not in s:
+              raise SystemExit('v3.3 default window size marker not found')
+          s = s.replace(old_size, ', 1040, 700, 0, 0, hInst, 0)', 1)
+
+          # Replace only the title-bar brand glyph. Meaning is explicitly left-to-right:
+          # COMPUTER -> WI-FI -> PHONE.
+          start = s.index('func drawWifi(')
+          end = s.index('\nfunc ', start + 10)
+          logo = r'''func drawWifi(hdc syscall.Handle, x, y int32) {
+              // Product mark: COMPUTER -> WI-FI -> PHONE, left to right.
+              // Keep the silhouette simple enough to stay clear at 16/24/38 px.
+              blue := rgb(20, 103, 232)
+              white := rgb(255, 255, 255)
+              soft := rgb(220, 235, 255)
+              fillRounded(hdc, RECT{x, y, x + 38, y + 38}, 10, blue)
+
+              // Computer / laptop on the left.
+              rounded(hdc, RECT{x + 4, y + 13, x + 15, y + 24}, 2, blue, white)
+              line(hdc, x+3, y+27, x+16, y+27, white, 2)
+              line(hdc, x+6, y+25, x+13, y+25, soft, 1)
+
+              // Wi-Fi transfer in the center. Dot is the source; two open rays point toward the phone.
+              circle(hdc, x+20, y+20, 2, white, white)
+              line(hdc, x+20, y+18, x+24, y+15, white, 2)
+              line(hdc, x+24, y+15, x+27, y+16, white, 2)
+              line(hdc, x+20, y+22, x+24, y+25, white, 2)
+              line(hdc, x+24, y+25, x+27, y+24, white, 2)
+              line(hdc, x+22, y+20, x+26, y+20, soft, 2)
+
+              // Phone on the right.
+              rounded(hdc, RECT{x + 28, y + 10, x + 34, y + 28}, 2, blue, white)
+              line(hdc, x+30, y+13, x+32, y+13, soft, 1)
+              line(hdc, x+30, y+25, x+32, y+25, soft, 1)
+          }
+          '''
+          s = s[:start] + logo + s[end:]
+          p.write_text(s, encoding='utf-8')
+          '@ | Set-Content '.\lanproxy-native-v331\patch_v331.py' -Encoding utf8
+          python '.\lanproxy-native-v331\patch_v331.py'
+          if ($LASTEXITCODE -ne 0) { throw 'v3.3.1 source patch failed' }
+          gofmt -w '.\lanproxy-native-v331\src\main.go'
+
+          $patched=(Get-Content '.\lanproxy-native-v331\src\main.go' -Raw)
+          if($patched -notmatch 'appVersion = "3.3.1"'){ throw 'Version patch did not apply' }
+          if($patched -notmatch '1040, 700'){ throw 'Window ratio patch did not apply' }
+          if($patched -notmatch 'COMPUTER -> WI-FI -> PHONE'){ throw 'Logo patch did not apply' }
+
+      - name: Generate PC to Wi-Fi to phone application icon
+        shell: pwsh
+        run: |
+          python -m pip install pillow --disable-pip-version-check -q
+          @'
+          from PIL import Image, ImageDraw
+          from pathlib import Path
+
+          def make(size):
+              q=4; S=size*q
+              img=Image.new('RGBA',(S,S),(0,0,0,0))
+              mask=Image.new('L',(S,S),0); md=ImageDraw.Draw(mask)
+              m=int(S*.06); md.rounded_rectangle((m,m,S-m,S-m),radius=int(S*.23),fill=255)
+              bg=Image.new('RGBA',(S,S)); pix=bg.load()
+              top=(20,104,232); bottom=(27,82,210)
+              for y in range(S):
+                  t=y/max(1,S-1)
+                  c=tuple(round(top[i]*(1-t)+bottom[i]*t) for i in range(3))+(255,)
+                  for x in range(S): pix[x,y]=c
+              img=Image.composite(bg,img,mask)
+              d=ImageDraw.Draw(img); W=(255,255,255,255); F=(224,237,255,255)
+              def rr(b,r,fill=None,outline=None,w=.02):
+                  d.rounded_rectangle(tuple(int(v*S) for v in b),radius=max(1,int(r*S)),fill=fill,outline=outline,width=max(1,int(w*S)))
+              def ln(points,fill=W,w=.025):
+                  d.line([(int(x*S),int(y*S)) for x,y in points],fill=fill,width=max(1,int(w*S)),joint='curve')
+
+              # COMPUTER on the left.
+              rr((.14,.37,.37,.60),.035,outline=W,w=.03)
+              ln([(.12,.66),(.39,.66)],W,.03)
+              ln([(.18,.62),(.33,.62)],F,.014)
+
+              # WI-FI in the center, broadcasting left-to-right toward the phone.
+              cx,cy=.49,.49; r=.022*S
+              d.ellipse((int(cx*S-r),int(cy*S-r),int(cx*S+r),int(cy*S+r)),fill=W)
+              ln([(.50,.45),(.56,.40),(.62,.41)],W,.028)
+              ln([(.50,.53),(.56,.58),(.62,.57)],W,.028)
+              ln([(.50,.40),(.57,.34),(.66,.36)],F,.022)
+              ln([(.50,.58),(.57,.64),(.66,.62)],F,.022)
+              ln([(.60,.49),(.68,.49)],W,.025)
+
+              # PHONE on the right.
+              rr((.70,.29,.83,.68),.035,outline=W,w=.03)
+              ln([(.735,.34),(.795,.34)],F,.012)
+              ln([(.745,.63),(.785,.63)],F,.012)
+              return img.resize((size,size),Image.Resampling.LANCZOS)
+
+          sizes=[16,20,24,32,40,48,64,128,256]
+          master=make(256)
+          out=Path(r'lanproxy-native-v331/src/app.ico')
+          master.save(out,format='ICO',sizes=[(s,s) for s in sizes])
+          print('icon bytes',out.stat().st_size)
+          '@ | Set-Content '.\lanproxy-native-v331\make_icon.py' -Encoding utf8
+          python '.\lanproxy-native-v331\make_icon.py'
+          if ($LASTEXITCODE -ne 0) { throw 'Application icon generation failed' }
+
+      - name: Embed icon and original v3.3 manifest
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v331\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if (-not (Test-Path '.\resource_windows_amd64.syso')) { throw 'resource syso was not created' }
+
+      - name: Build with exact v3.3 compiler and linker mode
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v331\src
+          $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $app=Get-Item '..\局域网代理共享助手.exe'
+          Write-Host "EXE size=$($app.Length) bytes"
+          if ($app.Length -gt 10000000) { throw 'Native EXE unexpectedly exceeds 10 MB' }
+
+      - name: Smoke test responsiveness and window ratio
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\lanproxy-native-v331\局域网代理共享助手.exe').Path
+          $p=Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $deadline=(Get-Date).AddSeconds(15)
+          do { Start-Sleep -Milliseconds 400; $p.Refresh(); if($p.HasExited){throw "App exited early code $($p.ExitCode)"} } until($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+          if($p.MainWindowHandle -eq 0){ Stop-Process $p -Force -ErrorAction SilentlyContinue; throw 'No main window appeared' }
+          Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class NC { [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,IntPtr l,uint f,uint t,out IntPtr r); [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r); public struct RECT { public int Left,Top,Right,Bottom; } }'
+          $result=[IntPtr]::Zero
+          if([NC]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result) -eq [IntPtr]::Zero){ throw 'UI not responding immediately' }
+          Start-Sleep -Seconds 8
+          $p.Refresh(); if($p.HasExited){throw 'App exited during background scan'}
+          $result=[IntPtr]::Zero
+          if([NC]::SendMessageTimeout($p.MainWindowHandle,0,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result) -eq [IntPtr]::Zero){throw 'UI froze during scan'}
+          $wr=New-Object NC+RECT
+          if(-not [NC]::GetWindowRect($p.MainWindowHandle,[ref]$wr)){throw 'Could not query window rect'}
+          $w=$wr.Right-$wr.Left; $h=$wr.Bottom-$wr.Top
+          Write-Host "Actual window size: ${w}x${h}; ratio=$([math]::Round($w/$h,3))"
+          if($w -lt 1000 -or $h -lt 660){throw 'Unexpected window dimensions'}
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\lanproxy-native-v331\局域网代理共享助手.exe').Path
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "SHA256=$hash"
+          Set-Content '.\lanproxy-native-v331\sha256.txt' $hash -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.3.1-ratio-logo
+          path: |
+            .\lanproxy-native-v331\局域网代理共享助手.exe
+            .\lanproxy-native-v331\sha256.txt
+          if-no-files-found: error
