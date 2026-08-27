@@ -1,0 +1,144 @@
+name: LANProxy Native v3.3.9 Realtime Polish
+
+on:
+  push:
+    branches: [lanproxy-native-v339-realtime-polish]
+    paths:
+      - 'lanproxy-native-v339/**'
+      - '.github/workflows/lanproxy-native-v339-realtime-polish.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild v3.3.8 and apply v3.3.9 patch
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\lanproxy-native-v339'; $src=Join-Path $root 'src'
+          if(Test-Path $src){Remove-Item $src -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v334/v334.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v335/v335.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          $p336=Get-ChildItem '.\lanproxy-native-v336\v336.b64.part*' | Sort-Object Name
+          (($p336|%{(Get-Content $_.FullName -Raw).Trim()}) -join '') | Set-Content '.\lanproxy-native-v336\v336.joined.b64' -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.joined.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v336/v336.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v337'); (r/'v337.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v337.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v337/v337.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          $p338=Get-ChildItem '.\lanproxy-native-v338\v338.b64.part*' | Sort-Object Name
+          (($p338|%{(Get-Content $_.FullName -Raw).Trim()}) -join '') | Set-Content '.\lanproxy-native-v338\v338.joined.b64' -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v338'); (r/'v338.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v338.joined.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v338/v338.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          $p339=Get-ChildItem '.\lanproxy-native-v339\v339.b64.part*' | Sort-Object Name
+          (($p339|%{(Get-Content $_.FullName -Raw).Trim()}) -join '') | Set-Content '.\lanproxy-native-v339\v339.joined.b64' -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v339'); (r/'v339.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v339.joined.b64').read_text().strip())))"
+          git apply --check --directory=lanproxy-native-v339/src lanproxy-native-v339/v339.patch
+          git apply --directory=lanproxy-native-v339/src lanproxy-native-v339/v339.patch
+          gofmt -w (Join-Path $src 'main.go')
+
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V339_SOURCE_SHA256=$h"
+          if($h -ne '8d767c6197dce44b30ff42c845bda8ce2342fa7f763776e53753863279128cde'){throw "source hash mismatch $h"}
+          $source=Get-Content (Join-Path $src 'main.go') -Raw
+          foreach($needle in @('appVersion = "3.3.9"','time.Now().Format("15:04:05")','设备接入：','设备离线：','设备网络活跃：','共享运行正常','deviceManualRefresh','SHARE ONLINE · ')){if(-not $source.Contains($needle)){throw "missing requirement: $needle"}}
+          if($source.Contains('devicePulseUntil')){throw 'old flashing pulse behavior still present'}
+
+      - name: Generate unchanged product icon
+        shell: pwsh
+        run: |
+          python -m pip install pillow --disable-pip-version-check -q
+          @'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          def mk(size):
+              q=4; S=size*q; im=Image.new('RGBA',(S,S)); mask=Image.new('L',(S,S)); md=ImageDraw.Draw(mask); pad=int(S*.055); md.rounded_rectangle((pad,pad,S-pad,S-pad),radius=int(S*.22),fill=255)
+              bg=Image.new('RGBA',(S,S)); px=bg.load(); a=(34,119,238); b=(15,89,205)
+              for y in range(S):
+                  t=y/max(1,S-1); c=tuple(round(a[i]*(1-t)+b[i]*t) for i in range(3))+(255,)
+                  for x in range(S): px[x,y]=c
+              im=Image.composite(bg,im,mask); d=ImageDraw.Draw(im); W=(255,255,255,255); F=(225,239,255,255); sc=lambda v:int(v*S)
+              def rr(box,r,w=.03): d.rounded_rectangle(tuple(sc(v) for v in box),radius=max(1,sc(r)),outline=W,width=max(1,sc(w)))
+              rr((.405,.10,.595,.33),.033,.028); d.line((sc(.46),sc(.145),sc(.54),sc(.145)),fill=F,width=max(1,sc(.012))); d.ellipse((sc(.487),sc(.285),sc(.513),sc(.311)),fill=W)
+              for box,wd in [((.23,.28,.77,.68),.037),((.31,.36,.69,.66),.038),((.39,.44,.61,.64),.04)]: d.arc(tuple(sc(v) for v in box),start=205,end=335,fill=W,width=max(1,sc(wd)))
+              d.ellipse((sc(.475),sc(.61),sc(.525),sc(.66)),fill=W); rr((.20,.70,.80,.85),.035,.03); d.line((sc(.50),sc(.85),sc(.50),sc(.90)),fill=W,width=max(1,sc(.022))); d.line((sc(.38),sc(.90),sc(.62),sc(.90)),fill=W,width=max(1,sc(.028)))
+              return im.resize((size,size),Image.Resampling.LANCZOS)
+          out=Path(r'lanproxy-native-v339/src/app.ico'); mk(256).save(out,format='ICO',sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content '.\lanproxy-native-v339\icon.py' -Encoding utf8
+          python '.\lanproxy-native-v339\icon.py'
+          Set-Location .\lanproxy-native-v339\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+
+      - name: Build single EXE
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v339\src
+          $env:GOOS='windows';$env:GOARCH='amd64';$env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $e=Get-Item '..\局域网代理共享助手.exe'; Write-Host "EXE_SIZE=$($e.Length)"; if($e.Length -gt 10000000){throw 'EXE too large'}
+
+      - name: Smoke test navigation and refresh
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path '.\lanproxy-native-v339\局域网代理共享助手.exe').Path
+          Add-Type -TypeDefinition @'
+          using System; using System.Runtime.InteropServices;
+          public static class UiSmoke339 {
+            [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+          }
+          '@
+          function Click($h,[int]$x,[int]$y){$lp=[IntPtr](($y -shl 16) -bor ($x -band 0xffff));[void][UiSmoke339]::PostMessage($h,0x0201,[IntPtr]::Zero,$lp);[void][UiSmoke339]::PostMessage($h,0x0202,[IntPtr]::Zero,$lp);Start-Sleep -Milliseconds 600}
+          $p=Start-Process $exe -PassThru; $dl=(Get-Date).AddSeconds(15)
+          do{Start-Sleep -Milliseconds 300;$p.Refresh();if($p.HasExited){throw "early exit $($p.ExitCode)"}}until($p.MainWindowHandle -ne 0 -or (Get-Date)-gt$dl)
+          if($p.MainWindowHandle -eq 0){throw 'no main window'}; $h=$p.MainWindowHandle
+          Click $h 680 32
+          Click $h 963 96
+          Start-Sleep -Seconds 3
+          $p.Refresh(); if($p.HasExited){throw 'device refresh crash'}
+          Click $h 65 96
+          Click $h 590 32
+          Click $h 790 32
+          $p.Refresh(); if($p.HasExited){throw 'navigation crash'}
+          Write-Host 'V339_UI_SMOKE_OK'
+          Stop-Process $p -Force
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $e=(Resolve-Path '.\lanproxy-native-v339\局域网代理共享助手.exe').Path
+          $h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "SHA256=$h"; Set-Content '.\lanproxy-native-v339\sha256.txt' $h -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.3.9-realtime-polish
+          path: |
+            .\lanproxy-native-v339\局域网代理共享助手.exe
+            .\lanproxy-native-v339\sha256.txt
+          if-no-files-found: error
