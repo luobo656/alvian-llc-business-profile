@@ -1,0 +1,48 @@
+name: Export current v3.3.6 source
+
+on:
+  push:
+    branches: [lanproxy-native-v336-rounded-alias]
+    paths:
+      - '.github/workflows/export-v336-current-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Rebuild v3.3.6 source
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\export-v336'; $src=Join-Path $root 'src'
+          if(Test-Path $root){Remove-Item $root -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=export-v336/src lanproxy-native-v334/v334.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --directory=export-v336/src lanproxy-native-v335/v335.build.patch
+          gofmt -w (Join-Path $src 'main.go')
+          $parts=Get-ChildItem '.\lanproxy-native-v336\v336.b64.part*' | Sort-Object Name
+          ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join '' | Set-Content '.\lanproxy-native-v336\v336.joined.b64' -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.joined.b64').read_text().strip())))"
+          git apply --directory=export-v336/src lanproxy-native-v336/v336.patch
+          gofmt -w (Join-Path $src 'main.go')
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V336_SOURCE_SHA256=$h"
+          if($h -ne 'cd620c352375ac91fd96c4a73796d795db5dbc2a7c86b12fc59f90e7dce455ab'){throw "unexpected v3.3.6 source $h"}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v336-current-source
+          path: .\export-v336\src\main.go
+          if-no-files-found: error
