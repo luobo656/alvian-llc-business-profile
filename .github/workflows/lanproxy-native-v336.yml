@@ -40,7 +40,10 @@ jobs:
           gofmt -w (Join-Path $src 'main.go')
           $h335=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V335_SOURCE_SHA256=$h335"
           if($h335 -ne '219e4e621a8e43e67054cb5e680f53348e053f459e7a2842559b4fd46bf7437e'){throw "unexpected v3.3.5 source $h335"}
-          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.patch.gz.b64').read_text().strip())))"
+          $v336Parts=Get-ChildItem '.\lanproxy-native-v336\v336.b64.part*' | Sort-Object Name
+          $v336Payload=($v336Parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          Set-Content '.\lanproxy-native-v336\v336.all.b64' $v336Payload -NoNewline -Encoding ascii
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v336'); (r/'v336.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v336.all.b64').read_text().strip())))"
           git apply --check --directory=lanproxy-native-v336/src lanproxy-native-v336/v336.patch
           if($LASTEXITCODE -ne 0){throw 'v3.3.6 patch check failed'}
           git apply --directory=lanproxy-native-v336/src lanproxy-native-v336/v336.patch
