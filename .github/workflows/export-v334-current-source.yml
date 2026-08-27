@@ -1,0 +1,41 @@
+name: Export v3.3.4 current source
+
+on:
+  push:
+    branches: [lanproxy-native-v334-foolproof]
+    paths:
+      - '.github/workflows/export-v334-current-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Rebuild source
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $root='.\lanproxy-native-v334'; $src=Join-Path $root 'export-src'
+          if(Test-Path $src){Remove-Item $src -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          [IO.File]::WriteAllBytes((Join-Path $root 'main.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'main.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.export.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v334/export-src lanproxy-native-v334/v334.export.patch
+          if($LASTEXITCODE -ne 0){throw 'patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "SOURCE_SHA256=$h"
+          if($h -ne 'a8f794442290aade93905b85e3c26f9ff930dabc8ed32bdcb98f8fdc3639ba04'){throw "source mismatch $h"}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v334-current-source
+          path: .\lanproxy-native-v334\export-src\main.go
+          if-no-files-found: error
