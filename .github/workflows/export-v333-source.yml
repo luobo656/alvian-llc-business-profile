@@ -22,9 +22,9 @@ jobs:
           $outDir = '.\exported-v333'
           if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
           New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-          $parts = Get-ChildItem (Join-Path $root 'source.part*') | Sort-Object Name
-          if ($parts.Count -ne 6) { throw "Expected 6 source parts, found $($parts.Count)" }
-          $payload = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          $names = @('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload = ($names | ForEach-Object { (Get-Content (Join-Path $root $_) -Raw).Trim() }) -join ''
+          if ($payload.Length -ne 35520) { throw "Combined source payload length mismatch: $($payload.Length)" }
           [IO.File]::WriteAllBytes((Join-Path $outDir 'main.go.gz'), [Convert]::FromBase64String($payload))
           $in = [IO.File]::OpenRead((Resolve-Path (Join-Path $outDir 'main.go.gz')))
           try {
