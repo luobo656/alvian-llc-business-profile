@@ -1,0 +1,142 @@
+name: LANProxy Native v3.3.5 Tray and Device Names
+
+on:
+  push:
+    branches: [lanproxy-native-v335-tray-device-name]
+    paths:
+      - 'lanproxy-native-v335/**'
+      - '.github/workflows/lanproxy-native-v335.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Rebuild v3.3.4 and apply v3.3.5 patch
+        shell: pwsh
+        run: |
+          $base='.\lanproxy-native-v333'; $v334='.\lanproxy-native-v334'; $root='.\lanproxy-native-v335'; $src=Join-Path $root 'src'
+          if(Test-Path $src){Remove-Item $src -Recurse -Force}; New-Item -ItemType Directory -Path $src -Force|Out-Null
+          $names=@('source.part00','source.fix01a','source.fix01b','source.fix02a','source.fix02b','source.part03','source.part04','source.part05')
+          $payload=($names|%{(Get-Content (Join-Path $base $_) -Raw).Trim()}) -join ''
+          if($payload.Length -ne 35520){throw "base payload length $($payload.Length)"}
+          [IO.File]::WriteAllBytes((Join-Path $root 'base.go.gz'),[Convert]::FromBase64String($payload))
+          $i=[IO.File]::OpenRead((Resolve-Path (Join-Path $root 'base.go.gz')))
+          try{$g=New-Object IO.Compression.GzipStream($i,[IO.Compression.CompressionMode]::Decompress);try{$o=[IO.File]::Create((Join-Path (Resolve-Path $src) 'main.go'));try{$g.CopyTo($o)}finally{$o.Dispose()}}finally{$g.Dispose()}}finally{$i.Dispose()}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v334'); (r/'v334.build.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v334.patch.gz.b64').read_text().strip())))"
+          git apply --directory=lanproxy-native-v335/src lanproxy-native-v334/v334.build.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.4 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h334=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V334_SOURCE_SHA256=$h334"
+          if($h334 -ne 'a8f794442290aade93905b85e3c26f9ff930dabc8ed32bdcb98f8fdc3639ba04'){throw "unexpected v3.3.4 source $h334"}
+          python -c "import base64,gzip,pathlib; r=pathlib.Path('lanproxy-native-v335'); (r/'v335.patch').write_bytes(gzip.decompress(base64.b64decode((r/'v335.patch.gz.b64').read_text().strip())))"
+          git apply --check --directory=lanproxy-native-v335/src lanproxy-native-v335/v335.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.5 patch check failed'}
+          git apply --directory=lanproxy-native-v335/src lanproxy-native-v335/v335.patch
+          if($LASTEXITCODE -ne 0){throw 'v3.3.5 patch failed'}
+          gofmt -w (Join-Path $src 'main.go')
+          $h=(Get-FileHash (Join-Path $src 'main.go') -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "V335_SOURCE_SHA256=$h"
+          if($h -ne '219e4e621a8e43e67054cb5e680f53348e053f459e7a2842559b4fd46bf7437e'){throw "source hash mismatch $h"}
+          Copy-Item '.\lanproxy-native-v310\app.manifest' (Join-Path $src 'app.manifest') -Force
+          Copy-Item '.\lanproxy-native-v310\go.mod' (Join-Path $src 'go.mod') -Force
+
+      - name: Generate and embed product icon
+        shell: pwsh
+        run: |
+          python -m pip install pillow --disable-pip-version-check -q
+          @'
+          from PIL import Image,ImageDraw
+          from pathlib import Path
+          def mk(size):
+              q=4; S=size*q; im=Image.new('RGBA',(S,S)); mask=Image.new('L',(S,S)); md=ImageDraw.Draw(mask); pad=int(S*.055); md.rounded_rectangle((pad,pad,S-pad,S-pad),radius=int(S*.22),fill=255)
+              bg=Image.new('RGBA',(S,S)); px=bg.load(); a=(34,119,238); b=(15,89,205)
+              for y in range(S):
+                  t=y/max(1,S-1); c=tuple(round(a[i]*(1-t)+b[i]*t) for i in range(3))+(255,)
+                  for x in range(S): px[x,y]=c
+              im=Image.composite(bg,im,mask); d=ImageDraw.Draw(im); W=(255,255,255,255); F=(225,239,255,255); sc=lambda v:int(v*S)
+              def rr(box,r,w=.03): d.rounded_rectangle(tuple(sc(v) for v in box),radius=max(1,sc(r)),outline=W,width=max(1,sc(w)))
+              rr((.405,.10,.595,.33),.033,.028); d.line((sc(.46),sc(.145),sc(.54),sc(.145)),fill=F,width=max(1,sc(.012))); d.ellipse((sc(.487),sc(.285),sc(.513),sc(.311)),fill=W)
+              for box,wd in [((.23,.28,.77,.68),.037),((.31,.36,.69,.66),.038),((.39,.44,.61,.64),.04)]: d.arc(tuple(sc(v) for v in box),start=205,end=335,fill=W,width=max(1,sc(wd)))
+              d.ellipse((sc(.475),sc(.61),sc(.525),sc(.66)),fill=W); rr((.20,.70,.80,.85),.035,.03); d.line((sc(.50),sc(.85),sc(.50),sc(.90)),fill=W,width=max(1,sc(.022))); d.line((sc(.38),sc(.90),sc(.62),sc(.90)),fill=W,width=max(1,sc(.028)))
+              return im.resize((size,size),Image.Resampling.LANCZOS)
+          out=Path(r'lanproxy-native-v335/src/app.ico'); mk(256).save(out,format='ICO',sizes=[(16,16),(20,20),(24,24),(32,32),(40,40),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content '.\lanproxy-native-v335\icon.py' -Encoding utf8
+          python '.\lanproxy-native-v335\icon.py'
+          Set-Location .\lanproxy-native-v335\src
+          go run github.com/akavel/rsrc@v0.10.2 -manifest app.manifest -ico app.ico -arch amd64 -o resource_windows_amd64.syso
+          if(-not(Test-Path '.\resource_windows_amd64.syso')){throw 'resource embedding failed'}
+
+      - name: Build single EXE
+        shell: pwsh
+        run: |
+          Set-Location .\lanproxy-native-v335\src
+          $env:GOOS='windows';$env:GOARCH='amd64';$env:CGO_ENABLED='0'
+          go build -trimpath -ldflags='-H=windowsgui -s -w' -o '..\局域网代理共享助手.exe' .
+          $e=Get-Item '..\局域网代理共享助手.exe'; Write-Host "EXE_SIZE=$($e.Length)"; if($e.Length -gt 10000000){throw 'EXE too large'}
+
+      - name: Verify 3 to 2 window and background close
+        shell: pwsh
+        run: |
+          $cfgDir=Join-Path $env:LOCALAPPDATA 'LANProxyShareAssistant'; New-Item -ItemType Directory -Path $cfgDir -Force|Out-Null
+          $cfgPath=Join-Path $cfgDir 'config.json'
+          # Simulate an old config with no close_behavior. v3.3.5 must migrate it to background mode by default.
+          '{"ip":"","http_local":0,"socks_local":0,"http_lan":18800,"socks_lan":11020,"share_socks":false,"last_process":""}'|Set-Content $cfgPath -Encoding utf8
+          $exe=(Resolve-Path '.\lanproxy-native-v335\局域网代理共享助手.exe').Path
+          $p=Start-Process $exe -PassThru; $dl=(Get-Date).AddSeconds(15)
+          do{Start-Sleep -Milliseconds 350;$p.Refresh();if($p.HasExited){throw "early exit $($p.ExitCode)"}}until($p.MainWindowHandle -ne 0 -or (Get-Date)-gt$dl); if($p.MainWindowHandle -eq 0){throw 'no window'}
+          $hwnd=$p.MainWindowHandle
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class N{[DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out R r);[DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);[DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);public struct R{public int Left,Top,Right,Bottom;}}'
+          $wr=New-Object N+R;[void][N]::GetWindowRect($hwnd,[ref]$wr);$w=$wr.Right-$wr.Left;$h=$wr.Bottom-$wr.Top;$ratio=[math]::Round($w/$h,3);Write-Host "WINDOW=${w}x${h} RATIO=$ratio"
+          if($w -ne 1024 -or $h -ne 682){throw "unexpected window size ${w}x${h}"}
+          if([math]::Abs(($w/$h)-1.5) -gt 0.01){throw "window is not approximately 3:2"}
+          [void][N]::PostMessage($hwnd,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);Start-Sleep -Milliseconds 900;$p.Refresh()
+          if($p.HasExited){throw 'default close unexpectedly exited process'}
+          if([N]::IsWindowVisible($hwnd)){throw 'default close did not hide the window'}
+          $saved=Get-Content $cfgPath -Raw | ConvertFrom-Json
+          if($saved.close_behavior -ne 'background'){throw "old config was not migrated to background close"}
+          # Simulate a tray left-click callback. The same hidden window must return.
+          [void][N]::PostMessage($hwnd,0x800A,[IntPtr]1,[IntPtr]0x0202);Start-Sleep -Milliseconds 700
+          if(-not [N]::IsWindowVisible($hwnd)){throw 'tray callback did not restore the window'}
+
+          function Shot($n){$p.Refresh();[void][N]::GetWindowRect($hwnd,[ref]$wr);$ww=$wr.Right-$wr.Left;$hh=$wr.Bottom-$wr.Top;$b=New-Object Drawing.Bitmap $ww,$hh;$g=[Drawing.Graphics]::FromImage($b);$g.CopyFromScreen($wr.Left,$wr.Top,0,0,(New-Object Drawing.Size $ww,$hh));$b.Save((Resolve-Path '.\lanproxy-native-v335').Path+'\'+$n+'.png');$g.Dispose();$b.Dispose()}
+          function Click($x,$y){$lp=[IntPtr](($y-shl 16)-bor($x-band 0xffff));[void][N]::PostMessage($hwnd,0x0201,[IntPtr]1,$lp);[void][N]::PostMessage($hwnd,0x0202,[IntPtr]0,$lp);Start-Sleep -Milliseconds 700}
+          Start-Sleep -Seconds 5; Shot 'home';Click 586 32;Shot 'phone';Click 684 32;Shot 'devices';Click 793 32;Shot 'advanced'
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
+
+      - name: Verify explicit exit close behavior
+        shell: pwsh
+        run: |
+          $cfgDir=Join-Path $env:LOCALAPPDATA 'LANProxyShareAssistant';$cfgPath=Join-Path $cfgDir 'config.json'
+          $saved=Get-Content $cfgPath -Raw | ConvertFrom-Json;$saved.close_behavior='exit';$saved|ConvertTo-Json|Set-Content $cfgPath -Encoding utf8
+          $exe=(Resolve-Path '.\lanproxy-native-v335\局域网代理共享助手.exe').Path;$p=Start-Process $exe -PassThru;$dl=(Get-Date).AddSeconds(15)
+          do{Start-Sleep -Milliseconds 350;$p.Refresh();if($p.HasExited){throw 'exit-mode launch failed'}}until($p.MainWindowHandle -ne 0 -or (Get-Date)-gt$dl);if($p.MainWindowHandle -eq 0){throw 'exit-mode no window'}
+          Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class X{[DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);}' -ErrorAction SilentlyContinue
+          [void][X]::PostMessage($p.MainWindowHandle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+          if(-not $p.WaitForExit(12000)){Stop-Process $p -Force -ErrorAction SilentlyContinue;throw 'exit close behavior did not exit'}
+          Write-Host "EXIT_MODE_OK code=$($p.ExitCode)"
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $e=(Resolve-Path '.\lanproxy-native-v335\局域网代理共享助手.exe').Path;$h=(Get-FileHash $e -Algorithm SHA256).Hash.ToLowerInvariant();Write-Host "SHA256=$h";Set-Content '.\lanproxy-native-v335\sha256.txt' $h -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LANProxyShareAssistant-v3.3.5-final
+          path: |
+            .\lanproxy-native-v335\局域网代理共享助手.exe
+            .\lanproxy-native-v335\sha256.txt
+            .\lanproxy-native-v335\home.png
+            .\lanproxy-native-v335\phone.png
+            .\lanproxy-native-v335\devices.png
+            .\lanproxy-native-v335\advanced.png
+          if-no-files-found: error
